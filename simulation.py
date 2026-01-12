@@ -40,8 +40,10 @@ class State:
         self.plate = None
         self.running = False
         self.render_changes = False
-    def add_plate(self, plate):
+    def update_plate(self, plate):
         self.plate = plate
+        self.render_changes = True
+        self.running = False
     def start(self):
         self.running = True
     def stop(self):
@@ -121,7 +123,7 @@ def input_loop(state):
             os.system("clear")
         if cmd.split()[0] == "new":
             plate_params = parse_args(cmd[4:])
-            state.add_plate(generate_plate(plate_params))
+            state.update_plate(generate_plate(plate_params))
        
 def print_help_message():
     print("""
