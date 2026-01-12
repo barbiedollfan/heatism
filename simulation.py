@@ -50,8 +50,6 @@ class State:
         self.plate.restart_simulation()
         self.render_changes = True
         self.running = False
-    def quit(self):
-        os._exit(1)
     def step(self):
         self.plate.step_simulation()
         self.render_changes = True
@@ -118,7 +116,9 @@ def input_loop(state):
         if cmd == "stop":
             state.stop()
         if cmd == "exit":
-            state.quit()
+            os._exit(1)
+        if cmd == "clear":
+            os.system("clear")
         if cmd.split()[0] == "new":
             plate_params = parse_args(cmd[4:])
             state.add_plate(generate_plate(plate_params))
@@ -155,6 +155,7 @@ t.start()
 while not sim.plate:
     continue
 
+plt.style.use('dark_background')
 fig, axis = plt.subplots()
 pcm = axis.pcolormesh(sim.plate.heat_map, cmap=plt.cm.jet, vmin=0, vmax=sim.plate.heat_map.max())
 plt.colorbar(pcm, ax=axis)
