@@ -1,2 +1,2 @@
 # heatism
-A 2D heat equation simulator.
+Heatism is a numerical solver for the 2D heat equation. It uses the Backwards Euler scheme, Dirichlet boundary conditions (constant temperature borders) and Matplotlib for rendering.
