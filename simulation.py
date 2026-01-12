@@ -7,8 +7,6 @@ from backwards_euler import *
 from initial_gen import *
 from math import *
 import threading
-import scipy.sparse.linalg as spl
-import scipy.sparse as spr
 import os
 
 class Plate:
