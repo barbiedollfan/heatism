@@ -26,9 +26,8 @@ def piecewise_poly_map(points):
     hmap = insert_matrix(tr, hmap, 0, midpoint)
     bl = poly_map(midpoint)
     hmap = insert_matrix(bl, hmap, midpoint, 0)
-    insert_matrix(tl, hmap, 0, 0)
     br = poly_map(midpoint)
-    hmap = insert_matrix(tl, hmap, midpoint, midpoint)
+    hmap = insert_matrix(br, hmap, midpoint, midpoint)
     return hmap
 
 def main():
