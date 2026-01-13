@@ -29,7 +29,7 @@ class Plate:
         self.points = points
         self.dr = side_length / (self.points - 1)
         self.diffusivity = k / (p * c)
-        self.dt = 1
+        self.dt = 0.5
         self.coeff = self.diffusivity * self.dt / (self.dr ** 2) 
         coeff_matrix = gen_coeff_matrix(self.points-2, 1 + 4*self.coeff, -self.coeff)
         coeff_matrix = spr.csc_matrix(coeff_matrix)
@@ -47,20 +47,35 @@ class SimState:
         self.plate = None
         self.running = False
         self.render_changes = False
+
     def update_plate(self, plate):
         self.plate = plate
         self.render_changes = True
         self.running = False
+
+    def update_dt(self, new_dt):
+        if not self.plate:
+            print("[WARN] Cannot modify the time step before initializing the plate.") 
+        else:
+            plate = self.plate
+            plate.dt = new_dt
+            plate.coeff = plate.diffusivity * plate.dt / (plate.dr ** 2) 
+            coeff_matrix = gen_coeff_matrix(plate.points-2, 1 + 4*plate.coeff, - plate.coeff)
+            coeff_matrix = spr.csc_matrix(coeff_matrix)
+            plate.solve = spl.factorized(coeff_matrix)
+
     def start(self):
         if not self.plate:
             print("[WARN] Cannot start before initializing the plate.") 
         else:
             self.running = True
+
     def stop(self):
         if not self.plate:
             print("[WARN] Cannot stop before initializing the plate.") 
         else:
             self.running = False
+
     def restart(self):
         if not self.plate:
             print("[WARN] Cannot restart before initializing the plate.") 
@@ -68,6 +83,7 @@ class SimState:
             self.plate.restart_simulation()
             self.render_changes = True
             self.running = False
+
     def step(self):
         self.plate.step_simulation()
         self.render_changes = True
@@ -148,6 +164,13 @@ def input_loop(state):
                 print("[FATAL]", e) 
                 os._exit(1)
             state.update_plate(plate)
+        elif cmd.split()[0] == "time_step":
+            new_dt = cmd.split()[1]
+            try:
+                new_dt = float(new_dt)
+                state.update_dt(new_dt)
+            except ValueError:
+                print(f"[WARN] Invalid time step {new_dt}.") 
         else:
             print(f"[WARN] Unknown command \"{cmd}\".")
 
@@ -158,9 +181,13 @@ COMMANDS
     • new {options}
         If no plate has been initialized, this will generate a new plate to be simulated. If a plate has already been initialized, this will stop the current simulation and generate a new initial distribution.
         new -f {function} - Function with which to generate the initial heat distribution. Defaults to a piecewise polynomial distribution.
-        new -f {material} - Material of the plate. Defaults to aluminum.
-        new -f {side_length} - Physical size of the grid in meters. Defaults to 0.5.
-        new -f {points} - Number of points with which the plate is approximated. Defaults to 100.
+        new -m {material} - Material of the plate. Defaults to aluminum.
+        new -s {side_length} - Physical size of the grid in meters. Defaults to 0.5.
+        new -p {points} - Number of points with which the plate is approximated. Defaults to 100.
+        Options can be combined, e.g:
+            new -f poly -s 0.1
+    • time_step {time}
+        Modifies the time step used for the simulation in seconds. Defaults to 0.5.
     • start
         Starts the simulation.
     • stop
