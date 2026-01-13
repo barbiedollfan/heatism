@@ -5,6 +5,7 @@ import json
 import sys
 from backwards_euler import *
 from initial_gen import *
+from exceptions import *
 from math import *
 import threading
 import os
@@ -64,8 +65,7 @@ def parse_args(cmds):
     for command in separate_commands:
         split_command = command.split()
         if len(split_command) > 2:
-            print("Parameters cannot contain multiple words.")
-            return None
+            raise ParameterError("Options cannot contain multiple words.")
         match split_command[0]:
             case 'f':
                 params["function"] = split_command[1]
@@ -73,8 +73,7 @@ def parse_args(cmds):
                 try:
                     points = int(split_command[1])
                 except ValueError:
-                    print("Invalid points parameter.")
-                    return None
+                    raise TypeError("Invalid points parameter.")
                 params["points"] = points
             case 'm':
                 params["material"] = split_command[1]
@@ -82,12 +81,10 @@ def parse_args(cmds):
                 try:
                     side_length = float(split_command[1])
                 except ValueError:
-                    print("Invalid side length parameter.")
-                    return None
+                    raise TypeError("Invalid side length parameter.")
                 params["side_length"] = side_length
             case _:
-                print("Could not parse parameters.")
-                return None
+                raise ParameterError("Could not parse parameters.")
     return params
 
 def generate_plate(args):
@@ -101,7 +98,7 @@ def generate_plate(args):
         case "piecewise_poly":
             initial_map = piecewise_poly_map(points)
         case _:
-            return None
+            raise ParameterError("Unknown function name.")
     return Plate(material.lower(), initial_map, points, side_length)
 
 def input_loop(state):
@@ -120,8 +117,17 @@ def input_loop(state):
         if cmd == "clear":
             os.system("clear")
         if cmd.split()[0] == "new":
-            plate_params = parse_args(cmd[4:])
-            state.update_plate(generate_plate(plate_params))
+            try:
+                plate_params = parse_args(cmd[4:])
+            except SimulationError as e:
+                print("[FATAL]: ", e) 
+                os._exit(1)
+            try:
+                plate = generate_plate(plate_params)
+            except SimulationError as e:
+                print("[FATAL]: ", e) 
+                os._exit(1)
+            state.update_plate(plate)
        
 def print_help_message():
     print("""
