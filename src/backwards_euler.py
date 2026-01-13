@@ -1,7 +1,12 @@
 import numpy as np
 import scipy.sparse as spr
 import scipy.sparse.linalg as spl
-from initial_gen import insert_matrix
+
+def insert_matrix(small_matrix, large_matrix, c, r):
+    s_rows, s_cols = small_matrix.shape
+
+    large_matrix[r:r + s_rows, c:c + s_cols] = small_matrix
+    return large_matrix
 
 def gen_coeff_matrix(n, diag, hor):
     N = n**2 # For an original n by n grid of interior points, the coefficient matrix becomes n^2 by n^2

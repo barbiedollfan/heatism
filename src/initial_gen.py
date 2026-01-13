@@ -1,12 +1,7 @@
 import numpy as np
 import random
 import matplotlib.pyplot as plt
-
-def insert_matrix(small_matrix, large_matrix, c, r):
-    s_rows, s_cols = small_matrix.shape
-
-    large_matrix[r:r + s_rows, c:c + s_cols] = small_matrix
-    return large_matrix
+from backwards_euler import insert_matrix
 
 def sigmoid(x):
     return 1/(1 + e**(-x))
