@@ -1,14 +1,21 @@
 import matplotlib.pyplot as plt
 import numpy as np
-import random
-import json
-import sys
+import random, json, sys, threading, os
 from backwards_euler import *
 from initial_gen import *
-from exceptions import *
-from math import *
-import threading
-import os
+from time import sleep
+
+class SimulationError(Exception):
+    pass
+
+class InputError(SimulationError):
+    pass
+
+class ParameterError(InputError):
+    pass
+
+class IncompatibleTypeError(InputError):
+    pass
 
 class Plate:
     def __init__(self, material, initial_heat_map, points, side_length):
@@ -34,7 +41,8 @@ class Plate:
     def restart_simulation(self):
         self.heat_map = self.initial_heat_map.copy()
 
-class State:
+
+class SimState:
     def __init__(self):
         self.plate = None
         self.running = False
@@ -44,16 +52,26 @@ class State:
         self.render_changes = True
         self.running = False
     def start(self):
-        self.running = True
+        if not self.plate:
+            print("[WARN] Cannot start before initializing the plate.") 
+        else:
+            self.running = True
     def stop(self):
-        self.running = False
+        if not self.plate:
+            print("[WARN] Cannot stop before initializing the plate.") 
+        else:
+            self.running = False
     def restart(self):
-        self.plate.restart_simulation()
-        self.render_changes = True
-        self.running = False
+        if not self.plate:
+            print("[WARN] Cannot restart before initializing the plate.") 
+        else:
+            self.plate.restart_simulation()
+            self.render_changes = True
+            self.running = False
     def step(self):
         self.plate.step_simulation()
         self.render_changes = True
+
 
 def parse_args(cmds):
     params = {"material": "aluminum",
@@ -73,7 +91,7 @@ def parse_args(cmds):
                 try:
                     points = int(split_command[1])
                 except ValueError:
-                    raise TypeError("Invalid points parameter.")
+                    raise IncompatibleTypeError("Invalid points parameter.")
                 params["points"] = points
             case 'm':
                 params["material"] = split_command[1]
@@ -81,11 +99,12 @@ def parse_args(cmds):
                 try:
                     side_length = float(split_command[1])
                 except ValueError:
-                    raise TypeError("Invalid side length parameter.")
+                    raise IncompatibleTypeError("Invalid side length parameter.")
                 params["side_length"] = side_length
             case _:
                 raise ParameterError("Could not parse parameters.")
     return params
+
 
 def generate_plate(args):
     function = args["function"] 
@@ -101,33 +120,37 @@ def generate_plate(args):
             raise ParameterError("Unknown function name.")
     return Plate(material.lower(), initial_map, points, side_length)
 
+
 def input_loop(state):
     while True:
         cmd = input("> ")
         if cmd == "help":
             print_help_message()
-        if cmd == "start":
+        elif cmd == "start":
             state.start()
-        if cmd == "restart":
+        elif cmd == "restart":
             state.restart()
-        if cmd == "stop":
+        elif cmd == "stop":
             state.stop()
-        if cmd == "exit":
+        elif cmd == "exit":
             os._exit(1)
-        if cmd == "clear":
+        elif cmd == "clear":
             os.system("clear")
-        if cmd.split()[0] == "new":
+        elif cmd.split()[0] == "new":
             try:
                 plate_params = parse_args(cmd[4:])
-            except SimulationError as e:
-                print("[FATAL]: ", e) 
+            except InputError as e:
+                print("[FATAL]", e) 
                 os._exit(1)
             try:
                 plate = generate_plate(plate_params)
             except SimulationError as e:
-                print("[FATAL]: ", e) 
+                print("[FATAL]", e) 
                 os._exit(1)
             state.update_plate(plate)
+        else:
+            print(f"[WARN] Unknown command \"{cmd}\".")
+
        
 def print_help_message():
     print("""
@@ -151,15 +174,14 @@ COMMANDS
           """)
 
 
-
-sim = State()
+sim = SimState()
 
 print("For a list of possible commands and options, use \"help\".")
 t = threading.Thread(target=input_loop, args=(sim,), daemon=True)
 t.start()
 
 while not sim.plate:
-    continue
+    sleep(0.1)
 
 plt.style.use('dark_background')
 fig, axis = plt.subplots()
@@ -171,5 +193,6 @@ while True:
         sim.step()
     if sim.render_changes:
         pcm.set_array(sim.plate.heat_map)
+        sim.render_changes = False
     plt.pause(0.01)
 plt.show()
