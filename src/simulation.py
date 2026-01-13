@@ -3,27 +3,24 @@ import numpy as np
 import random, json, sys, threading, os
 from backwards_euler import *
 from initial_gen import *
+from exceptions import *
 from time import sleep
-
-class SimulationError(Exception):
-    pass
-
-class InputError(SimulationError):
-    pass
-
-class ParameterError(InputError):
-    pass
-
-class IncompatibleTypeError(InputError):
-    pass
 
 class Plate:
     def __init__(self, material, initial_heat_map, points, side_length):
-        with open('materials.json', 'r') as f:
-            material_dict = json.load(f)
-        k = material_dict["plate"][material]["k"]
-        p = material_dict["plate"][material]["p"]
-        c = material_dict["plate"][material]["c"]
+        try:
+            with open('materials.json', 'r') as f:
+                material_dict = json.load(f)
+        except FileNotFoundError:
+            raise MaterialsFileError("Could not find materials file.") 
+
+        try:
+            k = material_dict[material]["k"]
+            p = material_dict[material]["p"]
+            c = material_dict[material]["c"]
+        except Exception:
+            raise MaterialsFileError("Could not decode material properties.") 
+
         self.heat_map = initial_heat_map.copy()
         self.initial_heat_map = initial_heat_map.copy()
         self.points = points
@@ -44,7 +41,6 @@ class Plate:
 
 class SimState:
     def __init__(self):
-        self.plate = None
         self.running = False
         self.render_changes = False
 
@@ -54,35 +50,35 @@ class SimState:
         self.running = False
 
     def update_dt(self, new_dt):
-        if not self.plate:
-            print("[WARN] Cannot modify the time step before initializing the plate.") 
-        else:
+        if hasattr(self, 'plate'):
             plate = self.plate
             plate.dt = new_dt
             plate.coeff = plate.diffusivity * plate.dt / (plate.dr ** 2) 
             coeff_matrix = gen_coeff_matrix(plate.points-2, 1 + 4*plate.coeff, - plate.coeff)
             coeff_matrix = spr.csc_matrix(coeff_matrix)
             plate.solve = spl.factorized(coeff_matrix)
+        else:
+            raise UninitializedError("Cannot modify the time step before initializing the plate.") 
 
     def start(self):
-        if not self.plate:
-            print("[WARN] Cannot start before initializing the plate.") 
-        else:
+        if hasattr(self, 'plate'):
             self.running = True
+        else:
+            raise UninitializedError("Cannot start before initializing the plate.") 
 
     def stop(self):
-        if not self.plate:
-            print("[WARN] Cannot stop before initializing the plate.") 
-        else:
+        if hasattr(self, 'plate'):
             self.running = False
+        else:
+            raise UninitializedError("Cannot stop before initializing the plate.") 
 
     def restart(self):
-        if not self.plate:
-            print("[WARN] Cannot restart before initializing the plate.") 
-        else:
+        if hasattr(self, 'plate'):
             self.plate.restart_simulation()
             self.render_changes = True
             self.running = False
+        else:
+            raise UninitializedError("Cannot restart before initializing the plate.") 
 
     def step(self):
         self.plate.step_simulation()
@@ -134,7 +130,11 @@ def generate_plate(args):
             initial_map = piecewise_poly_map(points)
         case _:
             raise ParameterError("Unknown function name.")
-    return Plate(material.lower(), initial_map, points, side_length)
+    try:
+        plate = Plate(material.lower(), initial_map, points, side_length)
+    except InitializationError:
+        raise
+    return plate
 
 
 def input_loop(state):
@@ -143,11 +143,20 @@ def input_loop(state):
         if cmd == "help":
             print_help_message()
         elif cmd == "start":
-            state.start()
+            try:
+                state.start()
+            except UninitializedError as e:
+                print(f"[WARN]", e) 
         elif cmd == "restart":
-            state.restart()
+            try:
+                state.restart()
+            except UninitializedError as e:
+                print(f"[WARN]", e) 
         elif cmd == "stop":
-            state.stop()
+            try:
+                state.stop()
+            except UninitializedError as e:
+                print(f"[WARN]", e) 
         elif cmd == "exit":
             os._exit(1)
         elif cmd == "clear":
@@ -155,22 +164,26 @@ def input_loop(state):
         elif cmd.split()[0] == "new":
             try:
                 plate_params = parse_args(cmd[4:])
+                try:
+                    plate = generate_plate(plate_params)
+                    state.update_plate(plate)
+                except InitializationError as e:
+                    print("[FATAL]", e) 
+                    os._exit(1)
+                except InputError as e:
+                    print("[WARN]", e)
             except InputError as e:
-                print("[FATAL]", e) 
-                os._exit(1)
-            try:
-                plate = generate_plate(plate_params)
-            except SimulationError as e:
-                print("[FATAL]", e) 
-                os._exit(1)
-            state.update_plate(plate)
+                print("[WARN]", e) 
         elif cmd.split()[0] == "time_step":
             new_dt = cmd.split()[1]
             try:
                 new_dt = float(new_dt)
-                state.update_dt(new_dt)
+                try:
+                    state.update_dt(new_dt)
+                except InputError as e:
+                    print(f"[WARN]", e) 
             except ValueError:
-                print(f"[WARN] Invalid time step {new_dt}.") 
+                print(f"[WARN] Invalid time step \"{new_dt}\".") 
         else:
             print(f"[WARN] Unknown command \"{cmd}\".")
 
@@ -207,7 +220,7 @@ print("For a list of possible commands and options, use \"help\".")
 t = threading.Thread(target=input_loop, args=(sim,), daemon=True)
 t.start()
 
-while not sim.plate:
+while not hasattr(sim, 'plate'):
     sleep(0.1)
 
 plt.style.use('dark_background')
