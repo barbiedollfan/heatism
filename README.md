@@ -9,9 +9,9 @@ It is currently only compatible with Linux.
 ![Example 3](assets/screenshot_3.png)
 
 ## TODO
-- [] Implement locking for race conditions
-- [] Fix points bug
-- [] Add simulation info in plot window
-- [] Better initial generation (bounded, more functions)
-- [] Improve temperature legend
-- [] Overhaul warnings to a proper warning system
+- [ ] Implement locking for race conditions
+- [ ] Fix points bug
+- [ ] Add simulation info in plot window
+- [ ] Better initial generation (bounded, more functions)
+- [ ] Improve temperature legend
+- [ ] Overhaul warnings to a proper warning system
