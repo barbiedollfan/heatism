@@ -15,3 +15,4 @@ It is currently only compatible with Linux.
 - [ ] Better initial generation (bounded, more functions)
 - [ ] Improve temperature legend
 - [ ] Overhaul warnings to a proper warning system
+- [ ] Add compatibility for Mac and Windows
