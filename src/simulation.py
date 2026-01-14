@@ -7,10 +7,12 @@ import scipy.sparse.linalg as spl
 import initial_gen as gen
 from exceptions import *
 from time import sleep
+from pathlib import Path
 
-DEFAULTS_PATH = "defaults.json"
-MATERIALS_PATH = "materials.json"
-
+base_dir = Path(__file__).parent
+config_dir = base_dir.parent / "configs"
+DEFAULTS_PATH = config_dir / "defaults.json"
+MATERIALS_PATH = config_dir / "materials.json"
 
 class Plate:
     def __init__(self, material, initial_heat_map, points, side_length):
