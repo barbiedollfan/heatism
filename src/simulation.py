@@ -2,14 +2,20 @@ import matplotlib.pyplot as plt
 import numpy as np
 import random, json, sys, threading, os
 from backwards_euler import insert_matrix, gen_coeff_matrix, gen_known_vector, next_temps
-import import_gen as gen
+import scipy.sparse as spr
+import scipy.sparse.linalg as spl
+import initial_gen as gen
 from exceptions import *
 from time import sleep
+
+DEFAULTS_PATH = "defaults.json"
+MATERIALS_PATH = "materials.json"
+
 
 class Plate:
     def __init__(self, material, initial_heat_map, points, side_length):
         try:
-            with open('materials.json', 'r') as f:
+            with open(MATERIALS_PATH, 'r') as f:
                 material_dict = json.load(f)
         except FileNotFoundError:
             raise MaterialsFileError("Could not find materials file.") 
@@ -18,8 +24,8 @@ class Plate:
             k = material_dict[material]["k"]
             p = material_dict[material]["p"]
             c = material_dict[material]["c"]
-        except Exception:
-            raise MaterialsFileError("Could not decode material properties.") 
+        except Exception as e:
+            raise MaterialsFileError("Could not decode material properties: {e}.") 
 
         self.heat_map = initial_heat_map.copy()
         self.initial_heat_map = initial_heat_map.copy()
@@ -27,22 +33,19 @@ class Plate:
         self.dr = side_length / (self.points - 1)
         self.diffusivity = k / (p * c)
 
-    def gen_dt(self, dt):
-        self.coeff = self.diffusivity * self.dt / (self.dr ** 2) 
+    def gen_solver(self, dt):
+        self.coeff = self.diffusivity * dt / (self.dr ** 2) 
         coeff_matrix = gen_coeff_matrix(self.points-2, 1 + 4*self.coeff, -self.coeff)
         coeff_matrix = spr.csc_matrix(coeff_matrix)
         self.solve = spl.factorized(coeff_matrix)
 
-    def step(self)
+    def update(self):
         t = gen_known_vector(self.heat_map, self.coeff)
-        new_temps_vec = solve_matrix(t) 
-        new_temps_matrix = new_temps_vec.reshape(n-2, n-2)
-        prev_temps = insert_matrix(new_temps_matrix, prev_temps, 1, 1)
+        new_temps_vec = self.solve(t) 
+        new_temps_matrix = new_temps_vec.reshape(self.points-2, self.points-2)
+        self.heat_map = insert_matrix(new_temps_matrix, self.heat_map, 1, 1)
 
-    def step_simulation(self):
-        self.heat_map = next_temps(self.solve, self.heat_map, self.coeff)
-
-    def restart_simulation(self):
+    def reset(self):
         self.heat_map = self.initial_heat_map.copy()
 
 
@@ -51,90 +54,48 @@ class SimState:
         self.running = False
         self.render_changes = False
 
-    def update_plate(self, new_plate):
-        if hasattr(self, 'plate'):
-            dt = self.plate.dt
+    def reset_flags(self):
+        self.running = False
+        self.render_changes = False
+
+    def add_plate(self, params):
+        material = params["material"]
+        points = params["points"]
+        side_length = params["side_length"]
+        function = params["function"]
+        dt = params["dt"]
+        try:
+            new_plate = generate_plate(material, points, side_length, function)
+        except InputError:
+            raise
+        except InitializationError:
+            raise
         self.plate = new_plate
-        self.plate.dt = dt
+        self.dt = dt
+        self.plate.gen_solver(dt)
+        self.render_changes = True
+
+    def update_dt(self, new_dt):
+        self.dt = new_dt
+        self.plate.gen_solver(new_dt)
+
+    def start(self):
+        self.running = True
+
+    def stop(self):
+        self.running = False
+
+    def restart(self):
+        self.plate.reset()
         self.render_changes = True
         self.running = False
 
-    def update_dt(self, new_dt):
-        if hasattr(self, 'plate'):
-            plate = self.plate
-            plate.dt = new_dt
-            plate.coeff = plate.diffusivity * plate.dt / (plate.dr ** 2) 
-            coeff_matrix = gen_coeff_matrix(plate.points-2, 1 + 4*plate.coeff, - plate.coeff)
-            coeff_matrix = spr.csc_matrix(coeff_matrix)
-            plate.solve = spl.factorized(coeff_matrix)
-        else:
-            raise UninitializedError("Cannot modify the time step before initializing the plate.") 
-
-    def start(self):
-        if hasattr(self, 'plate'):
-            self.running = True
-        else:
-            raise UninitializedError("Cannot start before initializing the plate.") 
-
-    def stop(self):
-        if hasattr(self, 'plate'):
-            self.running = False
-        else:
-            raise UninitializedError("Cannot stop before initializing the plate.") 
-
-    def restart(self):
-        if hasattr(self, 'plate'):
-            self.plate.restart_simulation()
-            self.render_changes = True
-            self.running = False
-        else:
-            raise UninitializedError("Cannot restart before initializing the plate.") 
-
     def step(self):
-        self.plate.step_simulation()
+        self.plate.update()
         self.render_changes = True
 
 
-def parse_args(cmds):
-    params = {"material": "aluminum",
-              "points": 100,
-              "side_length": 0.5,
-              "function": "piecewise_poly",
-              "dt": 0.5}
-    cmds_string = "".join(cmds)
-    separate_commands = [cmd for cmd in cmds_string.split('-') if cmd]
-    for command in separate_commands:
-        split_command = command.split()
-        if len(split_command) > 2:
-            raise ParameterError("Options cannot contain multiple words.")
-        match split_command[0]:
-            case 'f':
-                params["function"] = split_command[1]
-            case 'p':
-                try:
-                    points = int(split_command[1])
-                except ValueError:
-                    raise IncompatibleTypeError("Invalid points parameter.")
-                params["points"] = points
-            case 'm':
-                params["material"] = split_command[1]
-            case 's':
-                try:
-                    side_length = float(split_command[1])
-                except ValueError:
-                    raise IncompatibleTypeError("Invalid side length parameter.")
-                params["side_length"] = side_length
-            case _:
-                raise ParameterError("Could not parse parameters.")
-    return params
-
-
-def generate_plate(args):
-    function = args["function"] 
-    points = args["points"] 
-    material = args["material"] 
-    side_length = args["side_length"] 
-    dt = args["dt"]
+def generate_plate(material, points, side_length, function):
     match function:
         case "poly":
             initial_map = gen.poly_map(points)
@@ -143,10 +104,60 @@ def generate_plate(args):
         case _:
             raise ParameterError("Unknown function name.")
     try:
-        new_plate = Plate(material.lower(), initial_map, points, side_length, dt)
+        new_plate = Plate(material, initial_map, points, side_length)
     except InitializationError:
         raise
-    return plate
+    return new_plate
+
+def new_state_args(cmds):
+    try:
+        with open(DEFAULTS_PATH, 'r') as f:
+            try:
+                params = json.load(f)
+            except Exception as e:
+                raise DefaultsFileError(f"Could not decode default parameters ({DEFAULTS_PATH}): {e}.") 
+    except FileNotFoundError:
+        raise DefaultsFileError("Could not find default parameters file.") 
+    try:
+        material = params["material"]
+        points = params["points"]
+        side_length = params["side_length"]
+        function = params["function"]
+        dt = params["dt"]
+    except Exception as e:
+        raise DefaultsFileError(f"Could not decode default parameters ({DEFAULTS_PATH}): {e}.") 
+    cmds_string = "".join(cmds)
+    separate_commands = [cmd for cmd in cmds_string.split('-') if cmd]
+    for command in separate_commands:
+        split_command = command.split()
+        if len(split_command) > 2:
+            raise ParameterError("Options cannot contain multiple words.")
+        match split_command[0]:
+            case 'f':
+                params["function"] = split_command[1].lower()
+            case 'p':
+                try:
+                    points = int(split_command[1])
+                except ValueError:
+                    raise IncompatibleTypeError("Invalid points parameter.")
+                params["points"] = points
+            case 'm':
+                params["material"] = split_command[1].lower()
+            case 's':
+                try:
+                    side_length = float(split_command[1])
+                except ValueError:
+                    raise IncompatibleTypeError("Invalid side length parameter.")
+                params["side_length"] = side_length
+            case 't':
+                try:
+                    dt = float(split_command[1])
+                except ValueError:
+                    raise IncompatibleTypeError("Invalid time step parameter.")
+                params["dt"] = dt
+            case _:
+                raise ParameterError("Could not parse parameters.")
+    return params
 
 
 def input_loop(state):
@@ -154,46 +165,53 @@ def input_loop(state):
         cmd = input("> ")
         if cmd == "help":
             print_help_message()
+
         elif cmd == "start":
-            try:
+            if begin_sim.is_set():
                 state.start()
-            except UninitializedError as e:
-                print(f"[WARN]", e) 
-        elif cmd == "restart":
-            try:
-                state.restart()
-            except UninitializedError as e:
-                print(f"[WARN]", e) 
+            else:
+                print("[WARN] Cannot start before initializing a plate.")
+
         elif cmd == "stop":
-            try:
+            if begin_sim.is_set():
                 state.stop()
-            except UninitializedError as e:
-                print(f"[WARN]", e) 
+            else:
+                print("[WARN] Cannot stop before initializing a plate.")
+
+        elif cmd == "restart":
+            if begin_sim.is_set():
+                state.restart()
+            else:
+                print("[WARN] Cannot restart before initializing a plate.")
+
         elif cmd == "exit":
             os._exit(1)
+
         elif cmd == "clear":
             os.system("clear")
+
         elif cmd.split()[0] == "new":
+            state.reset_flags()
             try:
-                plate_params = parse_args(cmd[4:])
-                try:
-                    new_plate = generate_plate(plate_params)
-                    state.update_plate(new_plate)
-                except InitializationError as e:
-                    print("[FATAL]", e) 
-                    os._exit(1)
-                except InputError as e:
-                    print("[WARN]", e)
+                sim_params = new_state_args(cmd[4:])
+                if begin_sim.is_set():
+                    sim_params["dt"] = state.dt
+                state.add_plate(sim_params)
+                begin_sim.set()
             except InputError as e:
                 print("[WARN]", e) 
+            except InitializationError as e:
+                print("[FATAL]", e) 
+                os._exit(1)
+
         elif cmd.split()[0] == "time_step":
             new_dt = cmd.split()[1]
             try:
                 new_dt = float(new_dt)
-                try:
+                if begin_sim.is_set():
                     state.update_dt(new_dt)
-                except InputError as e:
-                    print(f"[WARN]", e) 
+                else:
+                    print("[WARN] Cannot change the time step before initializing a plate.")
             except ValueError:
                 print(f"[WARN] Invalid time step \"{new_dt}\".") 
         else:
@@ -207,12 +225,13 @@ COMMANDS
         If no plate has been initialized, this will generate a new plate to be simulated. If a plate has already been initialized, this will stop the current simulation and generate a new initial distribution.
         new -f {function} - Function with which to generate the initial heat distribution. Defaults to a piecewise polynomial distribution.
         new -m {material} - Material of the plate. Defaults to aluminum.
-        new -s {side_length} - Physical size of the grid in meters. Defaults to 0.5.
+        new -s {side length} - Physical size of the grid in meters. Defaults to 0.5.
         new -p {points} - Number of points with which the plate is approximated. Defaults to 100.
+        new -t {time step} - Time step with which to simulate the plate. Defaults to 0.5.
         Options can be combined, e.g:
             new -f poly -s 0.1
     • time_step {time}
-        Modifies the time step used for the simulation in seconds. Defaults to 0.5.
+        Modifies the time step used for the simulation in seconds. Changing the time step is persistent across plates.
     • start
         Starts the simulation.
     • stop
@@ -228,11 +247,13 @@ COMMANDS
 begin_sim = threading.Event()
 lock = threading.Lock()
 
-begin_sim.wait()
+sim = SimState()
 
 print("For a list of possible commands and options, use \"help\".")
 thread = threading.Thread(target=input_loop, args=(sim,), daemon=True)
 thread.start()
+
+begin_sim.wait()
 
 plt.style.use('dark_background')
 fig, axis = plt.subplots()

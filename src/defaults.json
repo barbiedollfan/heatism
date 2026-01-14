@@ -1,0 +1,7 @@
+{
+    "material": "aluminum",
+    "points": 100,
+    "side_length": 0.5,
+    "function": "piecewise_poly",
+    "dt": 0.5
+}

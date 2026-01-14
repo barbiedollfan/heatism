@@ -21,3 +21,6 @@ class InitializationError(SimulationError):
 
 class MaterialsFileError(InitializationError):
     pass
+
+class DefaultsFileError(InitializationError):
+    pass
