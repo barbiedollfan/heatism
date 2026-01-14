@@ -1,8 +1,8 @@
 import matplotlib.pyplot as plt
 import numpy as np
 import random, json, sys, threading, os
-from backwards_euler import *
-from initial_gen import *
+from backwards_euler import insert_matrix, gen_coeff_matrix, gen_known_vector, next_temps
+import import_gen as gen
 from exceptions import *
 from time import sleep
 
@@ -26,11 +26,18 @@ class Plate:
         self.points = points
         self.dr = side_length / (self.points - 1)
         self.diffusivity = k / (p * c)
-        self.dt = 0.5
+
+    def gen_dt(self, dt):
         self.coeff = self.diffusivity * self.dt / (self.dr ** 2) 
         coeff_matrix = gen_coeff_matrix(self.points-2, 1 + 4*self.coeff, -self.coeff)
         coeff_matrix = spr.csc_matrix(coeff_matrix)
         self.solve = spl.factorized(coeff_matrix)
+
+    def step(self)
+        t = gen_known_vector(self.heat_map, self.coeff)
+        new_temps_vec = solve_matrix(t) 
+        new_temps_matrix = new_temps_vec.reshape(n-2, n-2)
+        prev_temps = insert_matrix(new_temps_matrix, prev_temps, 1, 1)
 
     def step_simulation(self):
         self.heat_map = next_temps(self.solve, self.heat_map, self.coeff)
@@ -44,8 +51,11 @@ class SimState:
         self.running = False
         self.render_changes = False
 
-    def update_plate(self, plate):
-        self.plate = plate
+    def update_plate(self, new_plate):
+        if hasattr(self, 'plate'):
+            dt = self.plate.dt
+        self.plate = new_plate
+        self.plate.dt = dt
         self.render_changes = True
         self.running = False
 
@@ -89,7 +99,8 @@ def parse_args(cmds):
     params = {"material": "aluminum",
               "points": 100,
               "side_length": 0.5,
-              "function": "piecewise_poly"}
+              "function": "piecewise_poly",
+              "dt": 0.5}
     cmds_string = "".join(cmds)
     separate_commands = [cmd for cmd in cmds_string.split('-') if cmd]
     for command in separate_commands:
@@ -123,15 +134,16 @@ def generate_plate(args):
     points = args["points"] 
     material = args["material"] 
     side_length = args["side_length"] 
+    dt = args["dt"]
     match function:
         case "poly":
-            initial_map = poly_map(points)
+            initial_map = gen.poly_map(points)
         case "piecewise_poly":
-            initial_map = piecewise_poly_map(points)
+            initial_map = gen.piecewise_poly_map(points)
         case _:
             raise ParameterError("Unknown function name.")
     try:
-        plate = Plate(material.lower(), initial_map, points, side_length)
+        new_plate = Plate(material.lower(), initial_map, points, side_length, dt)
     except InitializationError:
         raise
     return plate
@@ -165,8 +177,8 @@ def input_loop(state):
             try:
                 plate_params = parse_args(cmd[4:])
                 try:
-                    plate = generate_plate(plate_params)
-                    state.update_plate(plate)
+                    new_plate = generate_plate(plate_params)
+                    state.update_plate(new_plate)
                 except InitializationError as e:
                     print("[FATAL]", e) 
                     os._exit(1)
@@ -213,15 +225,14 @@ COMMANDS
         Prints this message.
           """)
 
+begin_sim = threading.Event()
+lock = threading.Lock()
 
-sim = SimState()
+begin_sim.wait()
 
 print("For a list of possible commands and options, use \"help\".")
-t = threading.Thread(target=input_loop, args=(sim,), daemon=True)
-t.start()
-
-while not hasattr(sim, 'plate'):
-    sleep(0.1)
+thread = threading.Thread(target=input_loop, args=(sim,), daemon=True)
+thread.start()
 
 plt.style.use('dark_background')
 fig, axis = plt.subplots()
