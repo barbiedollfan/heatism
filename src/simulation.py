@@ -294,7 +294,7 @@ def generate_plot_info(state):
         status = "Running"
     else:
         status = "Paused"
-    return f"Δt: {state.dt}s\nMaterial: {state.material}\nAverage temp: {average_temp}K\nStatus: {status}"
+    return f"Δt: {state.dt}s\nMaterial: {state.material.capitalize()}\nAverage Temp: {average_temp}K\nStatus: {status}"
 
 begin_sim = threading.Event()
 lock = threading.Lock()
