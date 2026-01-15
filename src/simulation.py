@@ -97,6 +97,7 @@ class SimState:
             raise
         except InputError:
             raise
+        self.plate.gen_solver(self.dt)
         self.render_changes = True
 
     def update_dt(self, new_dt):
