@@ -97,21 +97,25 @@ class SimState:
             raise
         except InputError:
             raise
+        self.render_changes = True
 
     def update_dt(self, new_dt):
         self.dt = new_dt
         self.plate.gen_solver(new_dt)
+        self.render_changes = True
 
     def start(self):
         self.running = True
+        self.render_changes = True
 
     def stop(self):
         self.running = False
+        self.render_changes = True
 
     def restart(self):
         self.plate.reset()
-        self.render_changes = True
         self.running = False
+        self.render_changes = True
 
     def step(self):
         self.plate.update()
@@ -284,6 +288,14 @@ COMMANDS
         Prints this message.
           """)
 
+def generate_plot_info(state):
+    average_temp = state.plate.heat_map.mean().round(2)
+    if state.running:
+        status = "Running"
+    else:
+        status = "Paused"
+    return f"Δt: {state.dt}s\nMaterial: {state.material}\nAverage temp: {average_temp}K\nStatus: {status}"
+
 begin_sim = threading.Event()
 lock = threading.Lock()
 
@@ -297,8 +309,17 @@ begin_sim.wait()
 
 plt.style.use('dark_background')
 fig, axis = plt.subplots()
+fig.subplots_adjust(right=0.75)
+
 with lock:
     pcm = axis.pcolormesh(sim.plate.heat_map, cmap=plt.cm.jet, vmin=0, vmax=sim.plate.heat_map.max())
+    info = fig.text(
+        0.78, 0.5,
+        generate_plot_info(sim),
+        va="center",
+        ha="left",
+        family="monospace"
+    )
 plt.colorbar(pcm, ax=axis)
 
 while True:
@@ -307,6 +328,7 @@ while True:
             sim.step()
         if sim.render_changes:
             pcm.set_array(sim.plate.heat_map)
+            info.set_text(generate_plot_info(sim))
             sim.render_changes = False
     plt.pause(0.01)
 plt.show()
