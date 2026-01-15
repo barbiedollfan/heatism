@@ -17,6 +17,9 @@ def poly_map(points):
     hmap = np.array([[abs(poly(coefficients_x, x/(points*degree_x)) + poly(coefficients_y, y/(points*degree_y))) for x in range(0, points)] for y in range(0, points)], dtype=float)
     return hmap
 
+def constant_map(points):
+    return np.full((points, points), np.random.randint(273, 1000))
+
 def piecewise_poly_map(points):
     midpoint = int(points/2)
     hmap = np.zeros((points, points))

@@ -19,6 +19,7 @@ class Plate:
         self.heat_map = initial_heat_map.copy()
         self.initial_heat_map = initial_heat_map.copy()
         self.points = points
+        self.side_length = side_length
         self.dr = side_length / (self.points - 1)
 
     def gen_solver(self, dt):
@@ -45,7 +46,8 @@ class Plate:
             c = properties["c"]
         except Exception as e:
             raise MaterialsFileError(f"Could not decode material properties: {e}.") 
-
+        self.c = c
+        self.p = p
         self.diffusivity = k / (p * c)
 
     def update(self):
@@ -63,6 +65,19 @@ class SimState:
         self.running = False
         self.render_changes = False
 
+    def print_info(self):
+        average_temp = self.plate.heat_map.mean().round(2)
+        thermal_energy = total_energy(self.plate.p, self.plate.c, self.plate.heat_map, self.plate.dr ** 2 * self.thickness).round(1)
+        print(f"""
+        Material - {self.material.capitalize()}
+        Side Length - {self.plate.side_length}m
+        Thickness - {self.thickness}m
+        Points - {self.plate.points}x{self.plate.points}
+        Time Step - {self.dt}s
+        Average Temperature - {average_temp}K
+        Total Thermal Energy - {thermal_energy}J
+        """)
+
     def reset_flags(self):
         self.running = False
         self.render_changes = False
@@ -73,6 +88,7 @@ class SimState:
         side_length = params["side_length"]
         function = params["function"]
         dt = params["dt"]
+        thickness = params["thickness"]
         try:
             new_plate = gen_plate(points, side_length, function)
         except InputError:
@@ -80,6 +96,7 @@ class SimState:
         self.plate = new_plate
         self.material = material
         self.dt = dt
+        self.thickness = thickness
         try:
             self.plate.gen_material_properties(material)
         except InitializationError:
@@ -99,6 +116,9 @@ class SimState:
             raise
         self.plate.gen_solver(self.dt)
         self.render_changes = True
+
+    def update_thickness(self, new_thickness):
+        self.thickness = new_thickness
 
     def update_dt(self, new_dt):
         self.dt = new_dt
@@ -129,6 +149,8 @@ def gen_plate(points, side_length, function):
             initial_map = gen.poly_map(points)
         case "piecewise_poly":
             initial_map = gen.piecewise_poly_map(points)
+        case "constant":
+            initial_map = gen.constant_map(points)
         case _:
             raise ParameterError("Unknown function name.")
     new_plate = Plate(initial_map, points, side_length)
@@ -149,6 +171,7 @@ def new_state_args(cmds):
         side_length = params["side_length"]
         function = params["function"]
         dt = params["dt"]
+        thickness = params["thickness"]
     except Exception as e:
         raise DefaultsFileError(f"Could not decode default parameters ({DEFAULTS_PATH}): {e}.") 
     cmds_string = "".join(cmds)
@@ -180,6 +203,12 @@ def new_state_args(cmds):
                 except ValueError:
                     raise IncompatibleTypeError("Invalid time step parameter.")
                 params["dt"] = dt
+            case 'th':
+                try:
+                    thickness = float(split_command[1])
+                except ValueError:
+                    raise IncompatibleTypeError("Invalid thickness parameter.")
+                params["thickness"] = thickness
             case _:
                 raise ParameterError("Could not parse parameters.")
     return params
@@ -190,6 +219,13 @@ def input_loop(state):
         cmd = input("> ")
         if cmd == "help":
             print_help_message()
+
+        elif cmd == "info":
+            with lock:
+                if begin_sim.is_set():
+                    state.print_info()
+                else:
+                    print("[WARN] Cannot print info before initializing a plate.")
 
         elif cmd == "start":
             with lock:
@@ -226,6 +262,7 @@ def input_loop(state):
                     if begin_sim.is_set(): # If the simulation state already exists, it should inherit the time step and material
                         sim_params["dt"] = state.dt
                         sim_params["material"] = state.material
+                        sim_params["thickness"] = state.thickness
                     state.add_plate(sim_params)
                     begin_sim.set()
                 except InputError as e:
@@ -259,9 +296,27 @@ def input_loop(state):
                         print("[WARN]", e)
                 else:
                     print("[WARN] Cannot change the material before initializing a plate.")
+
+        elif cmd.split()[0] == "thickness":
+            with lock:
+                new_thickness = cmd.split()[1]
+                try:
+                    new_thickness = float(new_thickness)
+                    if begin_sim.is_set():
+                        state.update_thickness(new_thickness)
+                    else:
+                        print("[WARN] Cannot change the thickness before initializing a plate.")
+                except ValueError:
+                    print(f"[WARN] Invalid thickness \"{new_dt}\".") 
         else:
             print(f"[WARN] Unknown command \"{cmd}\".")
 
+def total_energy(p, c, temp_field, dv):
+    total = 0
+    for row in temp_field:
+        for temp in row:
+            total += p * c * temp * dv
+    return total
        
 def print_help_message():
     print("""
@@ -271,7 +326,7 @@ COMMANDS
         new -f {function} - Function with which to generate the initial heat distribution. Defaults to a piecewise polynomial distribution.
         new -m {material} - Material of the plate. Defaults to aluminum.
         new -s {side length} - Physical size of the grid in meters. Defaults to 0.5.
-        new -p {points} - Number of points with which the plate is approximated. Defaults to 100.
+        new -p {points} - Number of points per side with which the plate is approximated. Defaults to 100 (a 100x100 grid).
         new -t {time step} - Time step with which to simulate the plate. Defaults to 0.5.
         Options can be combined, e.g:
             new -f poly -s 0.1

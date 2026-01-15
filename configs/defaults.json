@@ -2,6 +2,7 @@
     "material": "aluminum",
     "points": 100,
     "side_length": 0.5,
+    "thickness": 0.05,
     "function": "piecewise_poly",
     "dt": 0.5
 }
