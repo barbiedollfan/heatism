@@ -68,7 +68,9 @@ class SimState:
 
     def print_info(self):
         average_temp = self.plate.heat_map.mean().round(2)
-        thermal_energy = total_energy(self.plate.p, self.plate.c, self.plate.heat_map, self.plate.dr ** 2 * self.thickness).round(1)
+        energy_info = total_energy(self.plate.p, self.plate.c, self.plate.heat_map, self.plate.dr ** 2 * self.thickness)
+        thermal_energy = energy_info[0].round(2)
+        energy_units = energy_info[1]
         print(f"""
         Material - {self.material.capitalize()}
         Side Length - {self.plate.side_length}m
@@ -76,7 +78,7 @@ class SimState:
         Points - {self.plate.points}x{self.plate.points}
         Time Step - {self.dt}s
         Average Temperature - {average_temp}K
-        Total Thermal Energy - {thermal_energy}J
+        Total Thermal Energy - {thermal_energy}{energy_units}
         """)
 
     def reset_flags(self):
@@ -91,11 +93,13 @@ class SimState:
         function = params["function"]
         dt = params["dt"]
         thickness = params["thickness"]
+        new_min = params["min"]
+        new_max = params["max"]
         if hasattr(self, 'plate'):
             if points != self.plate.points:
                 self.regen_plot = True
         try:
-            new_plate = gen_plate(points, side_length, function)
+            new_plate = gen_plate(points, side_length, function, new_min, new_max)
         except InputError:
             raise
         self.plate = new_plate
@@ -148,14 +152,16 @@ class SimState:
         self.render_changes = True
 
 
-def gen_plate(points, side_length, function):
+def gen_plate(points, side_length, function, new_min, new_max):
     match function:
         case "poly":
-            initial_map = gen.poly_map(points)
-        case "piecewise_poly":
-            initial_map = gen.piecewise_poly_map(points)
+            initial_map = gen.poly_map(points, new_min, new_max)
         case "constant":
-            initial_map = gen.constant_map(points)
+            initial_map = gen.constant_map(points, new_min, new_max)
+        case "piecewise_poly":
+            initial_map = gen.piecewise_poly_map(points, new_min, new_max)
+        case "piecewise":
+            initial_map = gen.piecewise_map(points, new_min, new_max)
         case _:
             raise ParameterError("Unknown function name.")
     new_plate = Plate(initial_map, points, side_length)
@@ -177,6 +183,8 @@ def new_state_args(cmds):
         function = params["function"]
         dt = params["dt"]
         thickness = params["thickness"]
+        new_min = params["min"]
+        new_max = params["max"]
     except Exception as e:
         raise DefaultsFileError(f"Could not decode default parameters ({DEFAULTS_PATH}): {e}.") 
     cmds_string = "".join(cmds)
@@ -318,12 +326,22 @@ def input_loop(state):
         else:
             print(f"[WARN] Unknown command \"{cmd}\".")
 
+def convert_energy(energy):
+    if energy < 1000:
+        return (energy, "J")
+    elif energy < 1000 ** 2:
+        return (energy / 1000, "kJ")
+    elif energy < 1000 ** 3:
+        return (energy / (1000 ** 2), "MJ")
+    elif energy < 1000 ** 4:
+        return (energy / (1000 ** 3), "GJ")
+
 def total_energy(p, c, temp_field, dv):
     total = 0
     for row in temp_field:
         for temp in row:
             total += p * c * temp * dv
-    return total
+    return convert_energy(total)
        
 def print_help_message():
     print("""
@@ -377,7 +395,7 @@ def generate_plot(state):
         ha="left",
         family="monospace"
     )
-    pcm = axis.pcolormesh(sim.plate.heat_map, cmap=plt.cm.jet, vmin=0, vmax=sim.plate.heat_map.max())
+    pcm = axis.pcolormesh(sim.plate.heat_map, cmap=plt.cm.jet, vmin=sim.plate.heat_map.min(), vmax=sim.plate.heat_map.max())
     bar = plt.colorbar(pcm, ax=axis)
     state.fig = fig
     state.axis = axis
