@@ -2,6 +2,7 @@
 class SimulationError(Exception):
     pass
 
+
 # Recoverable or non-fatal errors
 class InputError(SimulationError):
     pass
@@ -14,6 +15,7 @@ class ParameterError(InputError):
 
 class IncompatibleTypeError(InputError):
     pass
+
 
 # Nonrecoverable or fatal errors
 class InitializationError(SimulationError):

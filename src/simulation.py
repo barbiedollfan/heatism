@@ -15,7 +15,19 @@ DEFAULTS_PATH = config_dir / "defaults.json"
 MATERIALS_PATH = config_dir / "materials.json"
 
 class Plate:
-    def __init__(self, material, initial_heat_map, points, side_length):
+    def __init__(self, initial_heat_map, points, side_length):
+        self.heat_map = initial_heat_map.copy()
+        self.initial_heat_map = initial_heat_map.copy()
+        self.points = points
+        self.dr = side_length / (self.points - 1)
+
+    def gen_solver(self, dt):
+        self.coeff = self.diffusivity * dt / (self.dr ** 2) 
+        coeff_matrix = gen_coeff_matrix(self.points-2, 1 + 4*self.coeff, -self.coeff)
+        coeff_matrix = spr.csc_matrix(coeff_matrix)
+        self.solve = spl.factorized(coeff_matrix)
+
+    def gen_material_properties(self, material):
         try:
             with open(MATERIALS_PATH, 'r') as f:
                 material_dict = json.load(f)
@@ -23,23 +35,18 @@ class Plate:
             raise MaterialsFileError("Could not find materials file.") 
 
         try:
-            k = material_dict[material]["k"]
-            p = material_dict[material]["p"]
-            c = material_dict[material]["c"]
+            properties = material_dict[material]
+        except KeyError:
+            raise ParameterError(f"Could not get properties for \"{material}\".")
+
+        try:
+            k = properties["k"]
+            p = properties["p"]
+            c = properties["c"]
         except Exception as e:
-            raise MaterialsFileError("Could not decode material properties: {e}.") 
+            raise MaterialsFileError(f"Could not decode material properties: {e}.") 
 
-        self.heat_map = initial_heat_map.copy()
-        self.initial_heat_map = initial_heat_map.copy()
-        self.points = points
-        self.dr = side_length / (self.points - 1)
         self.diffusivity = k / (p * c)
-
-    def gen_solver(self, dt):
-        self.coeff = self.diffusivity * dt / (self.dr ** 2) 
-        coeff_matrix = gen_coeff_matrix(self.points-2, 1 + 4*self.coeff, -self.coeff)
-        coeff_matrix = spr.csc_matrix(coeff_matrix)
-        self.solve = spl.factorized(coeff_matrix)
 
     def update(self):
         t = gen_known_vector(self.heat_map, self.coeff)
@@ -67,15 +74,29 @@ class SimState:
         function = params["function"]
         dt = params["dt"]
         try:
-            new_plate = generate_plate(material, points, side_length, function)
+            new_plate = gen_plate(points, side_length, function)
         except InputError:
             raise
+        self.plate = new_plate
+        self.material = material
+        self.dt = dt
+        try:
+            self.plate.gen_material_properties(material)
         except InitializationError:
             raise
-        self.plate = new_plate
-        self.dt = dt
+        except InputError:
+            raise
         self.plate.gen_solver(dt)
         self.render_changes = True
+
+    def update_material(self, new_material):
+        self.material = new_material
+        try:
+            self.plate.gen_material_properties(new_material)
+        except InitializationError:
+            raise
+        except InputError:
+            raise
 
     def update_dt(self, new_dt):
         self.dt = new_dt
@@ -97,7 +118,7 @@ class SimState:
         self.render_changes = True
 
 
-def generate_plate(material, points, side_length, function):
+def gen_plate(points, side_length, function):
     match function:
         case "poly":
             initial_map = gen.poly_map(points)
@@ -105,10 +126,7 @@ def generate_plate(material, points, side_length, function):
             initial_map = gen.piecewise_poly_map(points)
         case _:
             raise ParameterError("Unknown function name.")
-    try:
-        new_plate = Plate(material, initial_map, points, side_length)
-    except InitializationError:
-        raise
+    new_plate = Plate(initial_map, points, side_length)
     return new_plate
 
 def new_state_args(cmds):
@@ -169,22 +187,25 @@ def input_loop(state):
             print_help_message()
 
         elif cmd == "start":
-            if begin_sim.is_set():
-                state.start()
-            else:
-                print("[WARN] Cannot start before initializing a plate.")
+            with lock:
+                if begin_sim.is_set():
+                    state.start()
+                else:
+                    print("[WARN] Cannot start before initializing a plate.")
 
         elif cmd == "stop":
-            if begin_sim.is_set():
-                state.stop()
-            else:
-                print("[WARN] Cannot stop before initializing a plate.")
+            with lock:
+                if begin_sim.is_set():
+                    state.stop()
+                else:
+                    print("[WARN] Cannot stop before initializing a plate.")
 
         elif cmd == "restart":
-            if begin_sim.is_set():
-                state.restart()
-            else:
-                print("[WARN] Cannot restart before initializing a plate.")
+            with lock:
+                if begin_sim.is_set():
+                    state.restart()
+                else:
+                    print("[WARN] Cannot restart before initializing a plate.")
 
         elif cmd == "exit":
             os._exit(1)
@@ -193,29 +214,46 @@ def input_loop(state):
             os.system("clear")
 
         elif cmd.split()[0] == "new":
-            state.reset_flags()
-            try:
-                sim_params = new_state_args(cmd[4:])
-                if begin_sim.is_set():
-                    sim_params["dt"] = state.dt
-                state.add_plate(sim_params)
-                begin_sim.set()
-            except InputError as e:
-                print("[WARN]", e) 
-            except InitializationError as e:
-                print("[FATAL]", e) 
-                os._exit(1)
+            with lock:
+                state.reset_flags()
+                try:
+                    sim_params = new_state_args(cmd[4:])
+                    if begin_sim.is_set(): # If the simulation state already exists, it should inherit the time step and material
+                        sim_params["dt"] = state.dt
+                        sim_params["material"] = state.material
+                    state.add_plate(sim_params)
+                    begin_sim.set()
+                except InputError as e:
+                    print("[WARN]", e) 
+                except InitializationError as e:
+                    print("[FATAL]", e) 
+                    os._exit(1)
 
         elif cmd.split()[0] == "time_step":
-            new_dt = cmd.split()[1]
-            try:
-                new_dt = float(new_dt)
+            with lock:
+                new_dt = cmd.split()[1]
+                try:
+                    new_dt = float(new_dt)
+                    if begin_sim.is_set():
+                        state.update_dt(new_dt)
+                    else:
+                        print("[WARN] Cannot change the time step before initializing a plate.")
+                except ValueError:
+                    print(f"[WARN] Invalid time step \"{new_dt}\".") 
+
+        elif cmd.split()[0] == "material":
+            with lock:
+                new_material = cmd.split()[1]
                 if begin_sim.is_set():
-                    state.update_dt(new_dt)
+                    try:
+                        state.update_material(new_material)
+                    except InitializationError as e:
+                        print("[FATAL]", e) 
+                        os._exit(1)
+                    except InputError as e:
+                        print("[WARN]", e)
                 else:
-                    print("[WARN] Cannot change the time step before initializing a plate.")
-            except ValueError:
-                print(f"[WARN] Invalid time step \"{new_dt}\".") 
+                    print("[WARN] Cannot change the material before initializing a plate.")
         else:
             print(f"[WARN] Unknown command \"{cmd}\".")
 
@@ -259,14 +297,16 @@ begin_sim.wait()
 
 plt.style.use('dark_background')
 fig, axis = plt.subplots()
-pcm = axis.pcolormesh(sim.plate.heat_map, cmap=plt.cm.jet, vmin=0, vmax=sim.plate.heat_map.max())
+with lock:
+    pcm = axis.pcolormesh(sim.plate.heat_map, cmap=plt.cm.jet, vmin=0, vmax=sim.plate.heat_map.max())
 plt.colorbar(pcm, ax=axis)
 
 while True:
-    if sim.running:
-        sim.step()
-    if sim.render_changes:
-        pcm.set_array(sim.plate.heat_map)
-        sim.render_changes = False
+    with lock:
+        if sim.running:
+            sim.step()
+        if sim.render_changes:
+            pcm.set_array(sim.plate.heat_map)
+            sim.render_changes = False
     plt.pause(0.01)
 plt.show()
