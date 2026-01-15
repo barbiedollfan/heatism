@@ -64,6 +64,7 @@ class SimState:
     def __init__(self):
         self.running = False
         self.render_changes = False
+        self.regen_plot = False
 
     def print_info(self):
         average_temp = self.plate.heat_map.mean().round(2)
@@ -81,6 +82,7 @@ class SimState:
     def reset_flags(self):
         self.running = False
         self.render_changes = False
+        self.regen_plot = False
 
     def add_plate(self, params):
         material = params["material"]
@@ -89,6 +91,9 @@ class SimState:
         function = params["function"]
         dt = params["dt"]
         thickness = params["thickness"]
+        if hasattr(self, 'plate'):
+            if points != self.plate.points:
+                self.regen_plot = True
         try:
             new_plate = gen_plate(points, side_length, function)
         except InputError:
@@ -187,7 +192,7 @@ def new_state_args(cmds):
                 try:
                     points = int(split_command[1])
                 except ValueError:
-                    raise IncompatibleTypeError("Invalid points parameter.")
+                    raise IncompatibleTypeError(f"Invalid points parameter \"{split_command[1]}\".")
                 params["points"] = points
             case 'm':
                 params["material"] = split_command[1].lower()
@@ -195,19 +200,19 @@ def new_state_args(cmds):
                 try:
                     side_length = float(split_command[1])
                 except ValueError:
-                    raise IncompatibleTypeError("Invalid side length parameter.")
+                    raise IncompatibleTypeError(f"Invalid side length parameter \"{split_command[1]}\".")
                 params["side_length"] = side_length
             case 't':
                 try:
                     dt = float(split_command[1])
                 except ValueError:
-                    raise IncompatibleTypeError("Invalid time step parameter.")
+                    raise IncompatibleTypeError(f"Invalid time step parameter \"{split_command[1]}\".")
                 params["dt"] = dt
             case 'th':
                 try:
                     thickness = float(split_command[1])
                 except ValueError:
-                    raise IncompatibleTypeError("Invalid thickness parameter.")
+                    raise IncompatibleTypeError(f"Invalid thickness parameter \"{split_command[1]}\".")
                 params["thickness"] = thickness
             case _:
                 raise ParameterError("Could not parse parameters.")
@@ -263,6 +268,8 @@ def input_loop(state):
                         sim_params["dt"] = state.dt
                         sim_params["material"] = state.material
                         sim_params["thickness"] = state.thickness
+                    else:
+                        sim.regen_plot = True
                     state.add_plate(sim_params)
                     begin_sim.set()
                 except InputError as e:
@@ -327,11 +334,16 @@ COMMANDS
         new -m {material} - Material of the plate. Defaults to aluminum.
         new -s {side length} - Physical size of the grid in meters. Defaults to 0.5.
         new -p {points} - Number of points per side with which the plate is approximated. Defaults to 100 (a 100x100 grid).
-        new -t {time step} - Time step with which to simulate the plate. Defaults to 0.5.
+        new -t {time step} - Time step with which to simulate the plate in seconds. Defaults to 0.5.
+        new -th {thickness} - Thickness of the plate in meters. Defaults to 0.05.
         Options can be combined, e.g:
             new -f poly -s 0.1
     • time_step {time}
-        Modifies the time step used for the simulation in seconds. Changing the time step is persistent across plates.
+        Modifies the time step used for the simulation. Changing the time step is persistent across plates.
+    • material {material}
+        Modifies the material used for the simulation. Changing the material is persistent across plates.
+    • thickness {thickness}
+        Modifies the thickness used for the simulation. Changing the thickness is persistent across plates, though it only affects the total thermal energy, not the actual simulation.
     • start
         Starts the simulation.
     • stop
@@ -340,6 +352,8 @@ COMMANDS
         Restarts the simulation, restoring the plate to its initial state.
     • exit
         Exits the program.
+    • info
+        Prints detailed information about the current simulation.
     • help
         Prints this message.
           """)
@@ -352,6 +366,25 @@ def generate_plot_info(state):
         status = "Paused"
     return f"Δt: {state.dt}s\nMaterial: {state.material.capitalize()}\nAverage Temp: {average_temp}K\nStatus: {status}"
 
+def generate_plot(state):
+    plt.style.use('dark_background')
+    fig, axis = plt.subplots()
+    fig.subplots_adjust(right=0.75)
+    info = fig.text(
+        0.78, 0.5,
+        generate_plot_info(sim),
+        va="center",
+        ha="left",
+        family="monospace"
+    )
+    pcm = axis.pcolormesh(sim.plate.heat_map, cmap=plt.cm.jet, vmin=0, vmax=sim.plate.heat_map.max())
+    bar = plt.colorbar(pcm, ax=axis)
+    state.fig = fig
+    state.axis = axis
+    state.info = info
+    state.pcm = pcm
+    state.bar = bar
+
 begin_sim = threading.Event()
 lock = threading.Lock()
 
@@ -363,28 +396,19 @@ thread.start()
 
 begin_sim.wait()
 
-plt.style.use('dark_background')
-fig, axis = plt.subplots()
-fig.subplots_adjust(right=0.75)
-
-with lock:
-    pcm = axis.pcolormesh(sim.plate.heat_map, cmap=plt.cm.jet, vmin=0, vmax=sim.plate.heat_map.max())
-    info = fig.text(
-        0.78, 0.5,
-        generate_plot_info(sim),
-        va="center",
-        ha="left",
-        family="monospace"
-    )
-plt.colorbar(pcm, ax=axis)
+generate_plot(sim)
 
 while True:
     with lock:
+        if sim.regen_plot:
+            plt.close()
+            generate_plot(sim)
+            sim.regen_plot = False
         if sim.running:
             sim.step()
         if sim.render_changes:
-            pcm.set_array(sim.plate.heat_map)
-            info.set_text(generate_plot_info(sim))
+            sim.pcm.set_array(sim.plate.heat_map)
+            sim.info.set_text(generate_plot_info(sim))
             sim.render_changes = False
     plt.pause(0.01)
 plt.show()

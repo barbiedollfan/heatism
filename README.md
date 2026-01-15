@@ -12,7 +12,7 @@ Certain features are currently only compatible with Linux.
 - [x] Implement locking for race conditions
 - [x] Add simulation info in plot window
 - [x] Add thickness and total thermal energy 
-- [ ] Fix points bug
+- [x] Fix points bug
 - [ ] Better initial generation (bounded, more functions)
 - [ ] Overhaul warnings to a proper warning system
 - [ ] Add compatibility for Mac and Windows
