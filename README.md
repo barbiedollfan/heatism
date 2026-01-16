@@ -10,6 +10,6 @@ Certain features are currently only compatible with Linux.
 
 ## TODO
 - [x] Fix colorbar axis scaling
+- [x] Add compatibility for Mac and Windows
 - [ ] Add more functions for generating initial conditions
 - [ ] Overhaul warnings to a proper warning system
-- [ ] Add compatibility for Mac and Windows

@@ -7,10 +7,18 @@ from backwards_euler import (
     gen_known_vector,
     next_temps,
 )
+from exceptions import (
+    InputError,
+    ParameterError,
+    IncompatibleTypeError,
+    InitializationError,
+    MaterialsFileError,
+    DefaultsFileError
+)
 import scipy.sparse as spr
 import scipy.sparse.linalg as spl
 import initial_gen as gen
-from exceptions import *
+import utils as ut
 from time import sleep
 from pathlib import Path
 
@@ -99,7 +107,7 @@ class SimState:
         thickness = self.thickness
         dt = self.dt
         material = self.material.capitalize()
-        energy_info = total_energy(
+        energy_info = ut.total_energy(
             self.plate.p,
             self.plate.c,
             self.plate.heat_map,
@@ -109,13 +117,13 @@ class SimState:
         energy_units = energy_info[1]
         print(
             f"""
-    Material: {material}
-    Side Length: {self.plate.side_length}m
-    Thickness: {thickness}m
-    Points: {self.plate.points}x{self.plate.points}
-    Time Step: {dt}s
-    Average Temperature: {average_temp}K
-    Total Thermal Energy: {thermal_energy}{energy_units}
+Material: {material}
+Side Length: {self.plate.side_length}m
+Thickness: {thickness}m
+Points: {self.plate.points}x{self.plate.points}
+Time Step: {dt}s
+Average Temperature: {average_temp}K
+Total Thermal Energy: {thermal_energy}{energy_units}
         """
         )
 
@@ -199,7 +207,7 @@ def gen_plate(points, side_length, function, new_min, new_max):
     return new_plate
 
 
-def new_state_args(cmds, params):
+def parse_new_params(cmds, params):
     cmds_string = "".join(cmds)
     separate_commands = [cmd for cmd in cmds_string.split("-") if cmd]
     for command in separate_commands:
@@ -244,39 +252,10 @@ def new_state_args(cmds, params):
                     )
                 params["thickness"] = thickness
             case "d":
-                params = get_default_params()
+                params = ut.get_default_params(DEFAULTS_PATH)
             case _:
                 raise ParameterError("Could not parse parameters.")
     return params
-
-
-def get_default_params():
-    try:
-        with open(DEFAULTS_PATH, "r") as f:
-            try:
-                defaults = json.load(f)
-            except Exception as e:
-                raise DefaultsFileError(
-                    f"Could not decode default parameters ({DEFAULTS_PATH}): {e}."
-                )
-    except FileNotFoundError:
-        raise DefaultsFileError(
-            f"Could not find default parameters file ({DEFAULTS_PATH})."
-        )
-    try:
-        material = defaults["material"]
-        points = defaults["points"]
-        side_length = defaults["side_length"]
-        function = defaults["function"]
-        dt = defaults["dt"]
-        thickness = defaults["thickness"]
-        new_min = defaults["min_temp"]
-        new_max = defaults["max_temp"]
-    except Exception as e:
-        raise DefaultsFileError(
-            f"Could not decode default parameters ({DEFAULTS_PATH}): {e}."
-        )
-    return defaults
 
 
 def input_loop(state):
@@ -287,11 +266,11 @@ def input_loop(state):
 
         elif cmd == "defaults":
             try:
-                info = generate_defaults_info()
+                info = ut.generate_defaults_info(DEFAULTS_PATH)
             except InitializationError as e:
                 print("[FATAL]", e)
                 os._exit(1)
-            print(generate_defaults_info())
+            print(info)
 
         elif cmd == "info":
             with lock:
@@ -325,17 +304,17 @@ def input_loop(state):
             os._exit(1)
 
         elif cmd == "clear":
-            os.system("clear")
+            ut.clear()
 
         elif cmd.split()[0] == "new":
             with lock:
                 state.reset_flags()
                 try:
                     if not begin_sim.is_set():
-                        defaults = get_default_params()
+                        defaults = ut.get_default_params(DEFAULTS_PATH)
                         state.params = defaults
                         begin_sim.set()
-                    sim_params = new_state_args(cmd[4:], state.params.copy())
+                    sim_params = parse_new_params(cmd[4:], state.params.copy())
                     if sim_params["points"] != state.points:
                         state.regen_plot = True
                     state.params = sim_params
@@ -393,25 +372,6 @@ def input_loop(state):
             print(f'[WARN] Unknown command "{cmd}".')
 
 
-def convert_energy(energy):
-    if energy < 1000:
-        return (energy, "J")
-    elif energy < 1000**2:
-        return (energy / 1000, "kJ")
-    elif energy < 1000**3:
-        return (energy / (1000**2), "MJ")
-    elif energy < 1000**4:
-        return (energy / (1000**3), "GJ")
-
-
-def total_energy(p, c, temp_field, dv):
-    total = 0
-    for row in temp_field:
-        for temp in row:
-            total += p * c * temp * dv
-    return convert_energy(total)
-
-
 def print_help_message():
     print(
         """
@@ -448,24 +408,6 @@ COMMANDS
         Prints this message.
           """
     )
-
-
-def generate_defaults_info():
-    try:
-        d = get_default_params()
-    except InitializationError:
-        raise
-    info = f"""
-    Material: {d["material"].capitalize()}
-    Points: {d["points"]}x{d["points"]}
-    Side Length: {d["side_length"]}m
-    Thickness: {d["thickness"]}m
-    Function: {d["function"].capitalize()}
-    Time Step: {d["dt"]}s
-    Min Temp: {d["min_temp"]}K
-    Max Temp: {d["max_temp"]}K
-    """
-    return info
 
 
 def generate_plot_info(state):
