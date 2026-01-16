@@ -5,6 +5,6 @@
     "thickness": 0.05,
     "function": "piecewise",
     "dt": 0.5,
-    "min": 273,
-    "max": 1000
+    "min_temp": 273,
+    "max_temp": 1000
 }

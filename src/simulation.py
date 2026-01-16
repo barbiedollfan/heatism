@@ -1,7 +1,12 @@
 import matplotlib.pyplot as plt
 import numpy as np
 import random, json, sys, threading, os
-from backwards_euler import insert_matrix, gen_coeff_matrix, gen_known_vector, next_temps
+from backwards_euler import (
+    insert_matrix,
+    gen_coeff_matrix,
+    gen_known_vector,
+    next_temps,
+)
 import scipy.sparse as spr
 import scipy.sparse.linalg as spl
 import initial_gen as gen
@@ -14,6 +19,7 @@ config_dir = base_dir.parent / "configs"
 DEFAULTS_PATH = config_dir / "defaults.json"
 MATERIALS_PATH = config_dir / "materials.json"
 
+
 class Plate:
     def __init__(self, initial_heat_map, points, side_length):
         self.heat_map = initial_heat_map.copy()
@@ -23,58 +29,86 @@ class Plate:
         self.dr = side_length / (self.points - 1)
 
     def gen_solver(self, dt):
-        self.coeff = self.diffusivity * dt / (self.dr ** 2) 
-        coeff_matrix = gen_coeff_matrix(self.points-2, 1 + 4*self.coeff, -self.coeff)
+        self.coeff = self.diffusivity * dt / (self.dr**2)
+        coeff_matrix = gen_coeff_matrix(
+            self.points - 2, 1 + 4 * self.coeff, -self.coeff
+        )
         coeff_matrix = spr.csc_matrix(coeff_matrix)
         self.solve = spl.factorized(coeff_matrix)
 
     def gen_material_properties(self, material):
         try:
-            with open(MATERIALS_PATH, 'r') as f:
+            with open(MATERIALS_PATH, "r") as f:
                 material_dict = json.load(f)
         except FileNotFoundError:
-            raise MaterialsFileError("Could not find materials file.") 
+            raise MaterialsFileError("Could not find materials file.")
 
         try:
             properties = material_dict[material]
         except KeyError:
-            raise ParameterError(f"Could not get properties for \"{material}\".")
+            raise ParameterError(f'Could not get properties for "{material}".')
 
         try:
             k = properties["k"]
             p = properties["p"]
             c = properties["c"]
         except Exception as e:
-            raise MaterialsFileError(f"Could not decode material properties: {e}.") 
+            raise MaterialsFileError(f"Could not decode material properties: {e}.")
         self.c = c
         self.p = p
         self.diffusivity = k / (p * c)
 
     def update(self):
         t = gen_known_vector(self.heat_map, self.coeff)
-        new_temps_vec = self.solve(t) 
-        new_temps_matrix = new_temps_vec.reshape(self.points-2, self.points-2)
+        new_temps_vec = self.solve(t)
+        new_temps_matrix = new_temps_vec.reshape(self.points - 2, self.points - 2)
         self.heat_map = insert_matrix(new_temps_matrix, self.heat_map, 1, 1)
 
     def reset(self):
         self.heat_map = self.initial_heat_map.copy()
 
 
+def param_property(param):
+    def getter(self):
+        return self.params[param]
+
+    def setter(self, value):
+        self.params[param] = value
+
+    return property(getter, setter)
+
+
 class SimState:
+    material = param_property("material")
+    points = param_property("points")
+    side_length = param_property("side_length")
+    function = param_property("function")
+    dt = param_property("dt")
+    min_temp = param_property("min_temp")
+    max_temp = param_property("max_temp")
+    thickness = param_property("thickness")
+
     def __init__(self):
         self.running = False
         self.render_changes = False
         self.regen_plot = False
+        self.params = {}
 
     def print_info(self):
         average_temp = self.plate.heat_map.mean().round(2)
-        thickness = self.params["thickness"]
-        dt = self.params["dt"]
-        material = self.params["material"].capitalize()
-        energy_info = total_energy(self.plate.p, self.plate.c, self.plate.heat_map, self.plate.dr ** 2 * thickness)
+        thickness = self.thickness
+        dt = self.dt
+        material = self.material.capitalize()
+        energy_info = total_energy(
+            self.plate.p,
+            self.plate.c,
+            self.plate.heat_map,
+            self.plate.dr**2 * thickness,
+        )
         thermal_energy = energy_info[0].round(2)
         energy_units = energy_info[1]
-        print(f"""
+        print(
+            f"""
     Material: {material}
     Side Length: {self.plate.side_length}m
     Thickness: {thickness}m
@@ -82,7 +116,8 @@ class SimState:
     Time Step: {dt}s
     Average Temperature: {average_temp}K
     Total Thermal Energy: {thermal_energy}{energy_units}
-        """)
+        """
+        )
 
     def reset_flags(self):
         self.running = False
@@ -90,13 +125,13 @@ class SimState:
         self.regen_plot = False
 
     def update_plate(self):
-        material = self.params["material"]
-        points = self.params["points"]
-        side_length = self.params["side_length"]
-        function = self.params["function"]
-        dt = self.params["dt"]
-        new_min = self.params["min"]
-        new_max = self.params["max"]
+        material = self.material
+        points = self.points
+        side_length = self.side_length
+        function = self.function
+        dt = self.dt
+        new_min = self.min_temp
+        new_max = self.max_temp
         try:
             new_plate = gen_plate(points, side_length, function, new_min, new_max)
         except InputError:
@@ -112,21 +147,21 @@ class SimState:
         self.render_changes = True
 
     def update_material(self, new_material):
-        self.params["material"] = new_material
+        self.material = new_material
         try:
             self.plate.gen_material_properties(new_material)
         except InitializationError:
             raise
         except InputError:
             raise
-        self.plate.gen_solver(self.params["dt"])
+        self.plate.gen_solver(self.dt)
         self.render_changes = True
 
     def update_thickness(self, new_thickness):
-        self.params["thickness"] = new_thickness
+        self.thickness = new_thickness
 
     def update_dt(self, new_dt):
-        self.params["dt"] = new_dt
+        self.dt = new_dt
         self.plate.gen_solver(new_dt)
         self.render_changes = True
 
@@ -163,57 +198,71 @@ def gen_plate(points, side_length, function, new_min, new_max):
     new_plate = Plate(initial_map, points, side_length)
     return new_plate
 
+
 def new_state_args(cmds, params):
     cmds_string = "".join(cmds)
-    separate_commands = [cmd for cmd in cmds_string.split('-') if cmd]
+    separate_commands = [cmd for cmd in cmds_string.split("-") if cmd]
     for command in separate_commands:
         split_command = command.split()
         if len(split_command) > 2:
             raise ParameterError("Options cannot contain multiple words.")
         match split_command[0]:
-            case 'f':
+            case "f":
                 params["function"] = split_command[1].lower()
-            case 'p':
+            case "p":
                 try:
                     points = int(split_command[1])
                 except ValueError:
-                    raise IncompatibleTypeError(f"Invalid points parameter \"{split_command[1]}\".")
+                    raise IncompatibleTypeError(
+                        f'Invalid points parameter "{split_command[1]}".'
+                    )
                 params["points"] = points
-            case 'm':
+            case "m":
                 params["material"] = split_command[1].lower()
-            case 's':
+            case "s":
                 try:
                     side_length = float(split_command[1])
                 except ValueError:
-                    raise IncompatibleTypeError(f"Invalid side length parameter \"{split_command[1]}\".")
+                    raise IncompatibleTypeError(
+                        f'Invalid side length parameter "{split_command[1]}".'
+                    )
                 params["side_length"] = side_length
-            case 't':
+            case "t":
                 try:
                     dt = float(split_command[1])
                 except ValueError:
-                    raise IncompatibleTypeError(f"Invalid time step parameter \"{split_command[1]}\".")
+                    raise IncompatibleTypeError(
+                        f'Invalid time step parameter "{split_command[1]}".'
+                    )
                 params["dt"] = dt
-            case 'th':
+            case "th":
                 try:
                     thickness = float(split_command[1])
                 except ValueError:
-                    raise IncompatibleTypeError(f"Invalid thickness parameter \"{split_command[1]}\".")
+                    raise IncompatibleTypeError(
+                        f'Invalid thickness parameter "{split_command[1]}".'
+                    )
                 params["thickness"] = thickness
-            case 'd':
+            case "d":
                 params = get_default_params()
             case _:
                 raise ParameterError("Could not parse parameters.")
     return params
 
+
 def get_default_params():
     try:
-        with open(DEFAULTS_PATH, 'r') as f:
+        with open(DEFAULTS_PATH, "r") as f:
             try:
                 defaults = json.load(f)
             except Exception as e:
-                raise DefaultsFileError(f"Could not decode default parameters ({DEFAULTS_PATH}): {e}.") 
+                raise DefaultsFileError(
+                    f"Could not decode default parameters ({DEFAULTS_PATH}): {e}."
+                )
     except FileNotFoundError:
-        raise DefaultsFileError(f"Could not find default parameters file ({DEFAULTS_PATH}).") 
+        raise DefaultsFileError(
+            f"Could not find default parameters file ({DEFAULTS_PATH})."
+        )
     try:
         material = defaults["material"]
         points = defaults["points"]
@@ -221,11 +270,14 @@ def get_default_params():
         function = defaults["function"]
         dt = defaults["dt"]
         thickness = defaults["thickness"]
-        new_min = defaults["min"]
-        new_max = defaults["max"]
+        new_min = defaults["min_temp"]
+        new_max = defaults["max_temp"]
     except Exception as e:
-        raise DefaultsFileError(f"Could not decode default parameters ({DEFAULTS_PATH}): {e}.") 
+        raise DefaultsFileError(
+            f"Could not decode default parameters ({DEFAULTS_PATH}): {e}."
+        )
     return defaults
+
 
 def input_loop(state):
     while True:
@@ -284,14 +336,14 @@ def input_loop(state):
                         state.params = defaults
                         begin_sim.set()
                     sim_params = new_state_args(cmd[4:], state.params.copy())
-                    if sim_params["points"] != state.params["points"]:
+                    if sim_params["points"] != state.points:
                         state.regen_plot = True
                     state.params = sim_params
                     state.update_plate()
                 except InputError as e:
-                    print("[WARN]", e) 
+                    print("[WARN]", e)
                 except InitializationError as e:
-                    print("[FATAL]", e) 
+                    print("[FATAL]", e)
                     os._exit(1)
 
         elif cmd.split()[0] == "time_step":
@@ -302,9 +354,11 @@ def input_loop(state):
                     if begin_sim.is_set():
                         state.update_dt(new_dt)
                     else:
-                        print("[WARN] Cannot change the time step before initializing a plate.")
+                        print(
+                            "[WARN] Cannot change the time step before initializing a plate."
+                        )
                 except ValueError:
-                    print(f"[WARN] Invalid time step \"{new_dt}\".") 
+                    print(f'[WARN] Invalid time step "{new_dt}".')
 
         elif cmd.split()[0] == "material":
             with lock:
@@ -313,12 +367,14 @@ def input_loop(state):
                     try:
                         state.update_material(new_material)
                     except InitializationError as e:
-                        print("[FATAL]", e) 
+                        print("[FATAL]", e)
                         os._exit(1)
                     except InputError as e:
                         print("[WARN]", e)
                 else:
-                    print("[WARN] Cannot change the material before initializing a plate.")
+                    print(
+                        "[WARN] Cannot change the material before initializing a plate."
+                    )
 
         elif cmd.split()[0] == "thickness":
             with lock:
@@ -328,21 +384,25 @@ def input_loop(state):
                     if begin_sim.is_set():
                         state.update_thickness(new_thickness)
                     else:
-                        print("[WARN] Cannot change the thickness before initializing a plate.")
+                        print(
+                            "[WARN] Cannot change the thickness before initializing a plate."
+                        )
                 except ValueError:
-                    print(f"[WARN] Invalid thickness \"{new_dt}\".") 
+                    print(f'[WARN] Invalid thickness "{new_dt}".')
         else:
-            print(f"[WARN] Unknown command \"{cmd}\".")
+            print(f'[WARN] Unknown command "{cmd}".')
+
 
 def convert_energy(energy):
     if energy < 1000:
         return (energy, "J")
-    elif energy < 1000 ** 2:
+    elif energy < 1000**2:
         return (energy / 1000, "kJ")
-    elif energy < 1000 ** 3:
-        return (energy / (1000 ** 2), "MJ")
-    elif energy < 1000 ** 4:
-        return (energy / (1000 ** 3), "GJ")
+    elif energy < 1000**3:
+        return (energy / (1000**2), "MJ")
+    elif energy < 1000**4:
+        return (energy / (1000**3), "GJ")
+
 
 def total_energy(p, c, temp_field, dv):
     total = 0
@@ -350,9 +410,11 @@ def total_energy(p, c, temp_field, dv):
         for temp in row:
             total += p * c * temp * dv
     return convert_energy(total)
-       
+
+
 def print_help_message():
-    print("""
+    print(
+        """
 COMMANDS 
     • new {options}
         If no plate has been initialized, this will generate a new plate to be simulated. If a plate has already been initialized, this will stop the current simulation and generate a new initial distribution.
@@ -384,7 +446,9 @@ COMMANDS
         Prints detailed information about the current simulation.
     • help
         Prints this message.
-          """)
+          """
+    )
+
 
 def generate_defaults_info():
     try:
@@ -398,34 +462,33 @@ def generate_defaults_info():
     Thickness: {d["thickness"]}m
     Function: {d["function"].capitalize()}
     Time Step: {d["dt"]}s
-    Min Temp: {d["min"]}K
-    Max Temp: {d["max"]}K
+    Min Temp: {d["min_temp"]}K
+    Max Temp: {d["max_temp"]}K
     """
     return info
 
 
 def generate_plot_info(state):
     average_temp = state.plate.heat_map.mean().round(2)
-    dt = state.params["dt"]
-    material = state.params["material"].capitalize()
+    dt = state.dt
+    material = state.material.capitalize()
     if state.running:
         status = "Running"
     else:
         status = "Paused"
     return f"Δt: {dt}s\nMaterial: {material}\nAverage Temp: {average_temp}K\nStatus: {status}"
 
+
 def generate_plot(state):
-    plt.style.use('dark_background')
+    plt.style.use("dark_background")
     fig, axis = plt.subplots()
     fig.subplots_adjust(right=0.75)
     info = fig.text(
-        0.78, 0.5,
-        generate_plot_info(state),
-        va="center",
-        ha="left",
-        family="monospace"
+        0.78, 0.5, generate_plot_info(state), va="center", ha="left", family="monospace"
     )
-    pcm = axis.pcolormesh(state.plate.heat_map, cmap=plt.cm.jet, vmin=state.params["min"], vmax=state.params["max"])
+    pcm = axis.pcolormesh(
+        state.plate.heat_map, cmap=plt.cm.jet, vmin=state.min_temp, vmax=state.max_temp
+    )
     bar = plt.colorbar(pcm, ax=axis)
     state.fig = fig
     state.axis = axis
@@ -433,12 +496,13 @@ def generate_plot(state):
     state.pcm = pcm
     state.bar = bar
 
+
 begin_sim = threading.Event()
 lock = threading.Lock()
 
 sim = SimState()
 
-print("For a list of possible commands and options, use \"help\".")
+print('For a list of possible commands and options, use "help".')
 thread = threading.Thread(target=input_loop, args=(sim,), daemon=True)
 thread.start()
 

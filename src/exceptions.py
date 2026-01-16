@@ -7,11 +7,14 @@ class SimulationError(Exception):
 class InputError(SimulationError):
     pass
 
+
 class UninitializedError(InputError):
     pass
 
+
 class ParameterError(InputError):
     pass
+
 
 class IncompatibleTypeError(InputError):
     pass
@@ -21,8 +24,10 @@ class IncompatibleTypeError(InputError):
 class InitializationError(SimulationError):
     pass
 
+
 class MaterialsFileError(InitializationError):
     pass
+
 
 class DefaultsFileError(InitializationError):
     pass
