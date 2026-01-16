@@ -68,17 +68,20 @@ class SimState:
 
     def print_info(self):
         average_temp = self.plate.heat_map.mean().round(2)
-        energy_info = total_energy(self.plate.p, self.plate.c, self.plate.heat_map, self.plate.dr ** 2 * self.thickness)
+        thickness = self.params["thickness"]
+        dt = self.params["dt"]
+        material = self.params["material"].capitalize()
+        energy_info = total_energy(self.plate.p, self.plate.c, self.plate.heat_map, self.plate.dr ** 2 * thickness)
         thermal_energy = energy_info[0].round(2)
         energy_units = energy_info[1]
         print(f"""
-        Material - {self.material.capitalize()}
-        Side Length - {self.plate.side_length}m
-        Thickness - {self.thickness}m
-        Points - {self.plate.points}x{self.plate.points}
-        Time Step - {self.dt}s
-        Average Temperature - {average_temp}K
-        Total Thermal Energy - {thermal_energy}{energy_units}
+    Material: {material}
+    Side Length: {self.plate.side_length}m
+    Thickness: {thickness}m
+    Points: {self.plate.points}x{self.plate.points}
+    Time Step: {dt}s
+    Average Temperature: {average_temp}K
+    Total Thermal Energy: {thermal_energy}{energy_units}
         """)
 
     def reset_flags(self):
@@ -86,26 +89,19 @@ class SimState:
         self.render_changes = False
         self.regen_plot = False
 
-    def add_plate(self, params):
-        material = params["material"]
-        points = params["points"]
-        side_length = params["side_length"]
-        function = params["function"]
-        dt = params["dt"]
-        thickness = params["thickness"]
-        new_min = params["min"]
-        new_max = params["max"]
-        if hasattr(self, 'plate'):
-            if points != self.plate.points:
-                self.regen_plot = True
+    def update_plate(self):
+        material = self.params["material"]
+        points = self.params["points"]
+        side_length = self.params["side_length"]
+        function = self.params["function"]
+        dt = self.params["dt"]
+        new_min = self.params["min"]
+        new_max = self.params["max"]
         try:
             new_plate = gen_plate(points, side_length, function, new_min, new_max)
         except InputError:
             raise
         self.plate = new_plate
-        self.material = material
-        self.dt = dt
-        self.thickness = thickness
         try:
             self.plate.gen_material_properties(material)
         except InitializationError:
@@ -116,21 +112,21 @@ class SimState:
         self.render_changes = True
 
     def update_material(self, new_material):
-        self.material = new_material
+        self.params["material"] = new_material
         try:
             self.plate.gen_material_properties(new_material)
         except InitializationError:
             raise
         except InputError:
             raise
-        self.plate.gen_solver(self.dt)
+        self.plate.gen_solver(self.params["dt"])
         self.render_changes = True
 
     def update_thickness(self, new_thickness):
-        self.thickness = new_thickness
+        self.params["thickness"] = new_thickness
 
     def update_dt(self, new_dt):
-        self.dt = new_dt
+        self.params["dt"] = new_dt
         self.plate.gen_solver(new_dt)
         self.render_changes = True
 
@@ -167,26 +163,7 @@ def gen_plate(points, side_length, function, new_min, new_max):
     new_plate = Plate(initial_map, points, side_length)
     return new_plate
 
-def new_state_args(cmds):
-    try:
-        with open(DEFAULTS_PATH, 'r') as f:
-            try:
-                params = json.load(f)
-            except Exception as e:
-                raise DefaultsFileError(f"Could not decode default parameters ({DEFAULTS_PATH}): {e}.") 
-    except FileNotFoundError:
-        raise DefaultsFileError("Could not find default parameters file.") 
-    try:
-        material = params["material"]
-        points = params["points"]
-        side_length = params["side_length"]
-        function = params["function"]
-        dt = params["dt"]
-        thickness = params["thickness"]
-        new_min = params["min"]
-        new_max = params["max"]
-    except Exception as e:
-        raise DefaultsFileError(f"Could not decode default parameters ({DEFAULTS_PATH}): {e}.") 
+def new_state_args(cmds, params):
     cmds_string = "".join(cmds)
     separate_commands = [cmd for cmd in cmds_string.split('-') if cmd]
     for command in separate_commands:
@@ -222,16 +199,47 @@ def new_state_args(cmds):
                 except ValueError:
                     raise IncompatibleTypeError(f"Invalid thickness parameter \"{split_command[1]}\".")
                 params["thickness"] = thickness
+            case 'd':
+                params = get_default_params()
             case _:
                 raise ParameterError("Could not parse parameters.")
     return params
 
+def get_default_params():
+    try:
+        with open(DEFAULTS_PATH, 'r') as f:
+            try:
+                defaults = json.load(f)
+            except Exception as e:
+                raise DefaultsFileError(f"Could not decode default parameters ({DEFAULTS_PATH}): {e}.") 
+    except FileNotFoundError:
+        raise DefaultsFileError(f"Could not find default parameters file ({DEFAULTS_PATH}).") 
+    try:
+        material = defaults["material"]
+        points = defaults["points"]
+        side_length = defaults["side_length"]
+        function = defaults["function"]
+        dt = defaults["dt"]
+        thickness = defaults["thickness"]
+        new_min = defaults["min"]
+        new_max = defaults["max"]
+    except Exception as e:
+        raise DefaultsFileError(f"Could not decode default parameters ({DEFAULTS_PATH}): {e}.") 
+    return defaults
 
 def input_loop(state):
     while True:
         cmd = input("> ")
         if cmd == "help":
             print_help_message()
+
+        elif cmd == "defaults":
+            try:
+                info = generate_defaults_info()
+            except InitializationError as e:
+                print("[FATAL]", e)
+                os._exit(1)
+            print(generate_defaults_info())
 
         elif cmd == "info":
             with lock:
@@ -271,15 +279,15 @@ def input_loop(state):
             with lock:
                 state.reset_flags()
                 try:
-                    sim_params = new_state_args(cmd[4:])
-                    if begin_sim.is_set(): # If the simulation state already exists, it should inherit the time step and material
-                        sim_params["dt"] = state.dt
-                        sim_params["material"] = state.material
-                        sim_params["thickness"] = state.thickness
-                    else:
-                        sim.regen_plot = True
-                    state.add_plate(sim_params)
-                    begin_sim.set()
+                    if not begin_sim.is_set():
+                        defaults = get_default_params()
+                        state.params = defaults
+                        begin_sim.set()
+                    sim_params = new_state_args(cmd[4:], state.params.copy())
+                    if sim_params["points"] != state.params["points"]:
+                        state.regen_plot = True
+                    state.params = sim_params
+                    state.update_plate()
                 except InputError as e:
                     print("[WARN]", e) 
                 except InitializationError as e:
@@ -300,7 +308,7 @@ def input_loop(state):
 
         elif cmd.split()[0] == "material":
             with lock:
-                new_material = cmd.split()[1]
+                new_material = cmd.split()[1].lower()
                 if begin_sim.is_set():
                     try:
                         state.update_material(new_material)
@@ -348,20 +356,20 @@ def print_help_message():
 COMMANDS 
     • new {options}
         If no plate has been initialized, this will generate a new plate to be simulated. If a plate has already been initialized, this will stop the current simulation and generate a new initial distribution.
-        new -f {function} - Function with which to generate the initial heat distribution. Defaults to a piecewise polynomial distribution.
-        new -m {material} - Material of the plate. Defaults to aluminum.
-        new -s {side length} - Physical size of the grid in meters. Defaults to 0.5.
-        new -p {points} - Number of points per side with which the plate is approximated. Defaults to 100 (a 100x100 grid).
-        new -t {time step} - Time step with which to simulate the plate in seconds. Defaults to 0.5.
-        new -th {thickness} - Thickness of the plate in meters. Defaults to 0.05.
-        Options can be combined, e.g:
-            new -f poly -s 0.1
+        new -d — Generates a plate with default parameters.
+        new -f {function} {options} — Function with which to generate the initial heat distribution.
+        new -m {material} {options} — Material of the plate.
+        new -s {side length} {options} — Physical size of the grid in meters.
+        new -p {points} {options} — Number of points per side with which the plate is approximated.
+        new -t {time step} {options} — Time step with which to simulate the plate in seconds.
+        new -th {thickness} {options} — Thickness of the plate in meters.
+        If an option is not provided, its parameter will be copied from the previous plate (i.e. changes to parameters are persistent). If no plate has been initialized, the default parameters will be used. 
     • time_step {time}
-        Modifies the time step used for the simulation. Changing the time step is persistent across plates.
+        Modifies the time step used for the simulation.
     • material {material}
-        Modifies the material used for the simulation. Changing the material is persistent across plates.
+        Modifies the material used for the simulation.
     • thickness {thickness}
-        Modifies the thickness used for the simulation. Changing the thickness is persistent across plates, though it only affects the total thermal energy, not the actual simulation.
+        Modifies the thickness used for the simulation. Changing the thickness does not affect the simulation, only the total thermal energy as displayed by the info command (see below).
     • start
         Starts the simulation.
     • stop
@@ -370,19 +378,41 @@ COMMANDS
         Restarts the simulation, restoring the plate to its initial state.
     • exit
         Exits the program.
+    • defaults
+        Prints a list of the default parameters.
     • info
         Prints detailed information about the current simulation.
     • help
         Prints this message.
           """)
 
+def generate_defaults_info():
+    try:
+        d = get_default_params()
+    except InitializationError:
+        raise
+    info = f"""
+    Material: {d["material"].capitalize()}
+    Points: {d["points"]}x{d["points"]}
+    Side Length: {d["side_length"]}m
+    Thickness: {d["thickness"]}m
+    Function: {d["function"].capitalize()}
+    Time Step: {d["dt"]}s
+    Min Temp: {d["min"]}K
+    Max Temp: {d["max"]}K
+    """
+    return info
+
+
 def generate_plot_info(state):
     average_temp = state.plate.heat_map.mean().round(2)
+    dt = state.params["dt"]
+    material = state.params["material"].capitalize()
     if state.running:
         status = "Running"
     else:
         status = "Paused"
-    return f"Δt: {state.dt}s\nMaterial: {state.material.capitalize()}\nAverage Temp: {average_temp}K\nStatus: {status}"
+    return f"Δt: {dt}s\nMaterial: {material}\nAverage Temp: {average_temp}K\nStatus: {status}"
 
 def generate_plot(state):
     plt.style.use('dark_background')
@@ -390,12 +420,12 @@ def generate_plot(state):
     fig.subplots_adjust(right=0.75)
     info = fig.text(
         0.78, 0.5,
-        generate_plot_info(sim),
+        generate_plot_info(state),
         va="center",
         ha="left",
         family="monospace"
     )
-    pcm = axis.pcolormesh(sim.plate.heat_map, cmap=plt.cm.jet, vmin=sim.plate.heat_map.min(), vmax=sim.plate.heat_map.max())
+    pcm = axis.pcolormesh(state.plate.heat_map, cmap=plt.cm.jet, vmin=state.params["min"], vmax=state.params["max"])
     bar = plt.colorbar(pcm, ax=axis)
     state.fig = fig
     state.axis = axis
