@@ -73,8 +73,7 @@ class Plate:
         new_temps_vec = self.solve(t)
         new_temps_matrix = new_temps_vec.reshape(self.points - 2, self.points - 2)
         self.heat_map = insert_matrix(new_temps_matrix, self.heat_map, 1, 1)
-        # print(self.heat_map.mean().round())
-        # print(self.heat_map)
+
     def reset(self):
         self.heat_map = self.initial_heat_map.copy()
 
@@ -90,14 +89,10 @@ def param_property(param):
 
 
 class SimState:
-    material = param_property("material")
-    points = param_property("points")
-    side_length = param_property("side_length")
-    function = param_property("function")
-    dt = param_property("dt")
-    min_temp = param_property("min_temp")
-    max_temp = param_property("max_temp")
-    thickness = param_property("thickness")
+    @classmethod
+    def add_default_attributes(cls, defaults_dict):
+        for param in defaults_dict.keys():
+            setattr(cls, param, param_property(param))
 
     def __init__(self):
         self.running = False
@@ -197,8 +192,10 @@ Total Thermal Energy: {thermal_energy}{energy_units}
 class MyParser(argparse.ArgumentParser):
     def error(self, message):
         raise InputError(message)
+
     def exit(self, status=0, message=None):
         os._exit(2)
+
     def populate(self):
         subs = self.add_subparsers(dest="cmd")
 
@@ -230,19 +227,11 @@ class MyParser(argparse.ArgumentParser):
 
 
 def gen_plate(points, side_length, function, new_min, new_max):
-    match function:
-        case "poly":
-            initial_map = gen.poly_map(points, new_min, new_max)
-        case "constant":
-            initial_map = gen.constant_map(points, new_min, new_max)
-        case "piecewise_poly":
-            initial_map = gen.piecewise_poly_map(points, new_min, new_max)
-        case "piecewise":
-            initial_map = gen.piecewise_map(points, new_min, new_max)
-        case "border":
-            initial_map = gen.border_map(points, new_min, new_max)
-        case _:
+    try:
+        fn = getattr(gen, f"{function}_map")
+    except AttributeError:
             raise ParameterError(f"unknown function name {function}.")
+    initial_map = fn(points, new_min, new_max)
     new_plate = Plate(initial_map, points, side_length)
     return new_plate
 
@@ -261,7 +250,6 @@ def input_loop(state):
         match args.cmd:
             case "help":
                 print_help_message()
-                continue
 
             case "materials":
                 try:
@@ -325,10 +313,14 @@ def input_loop(state):
                 with lock:
                     state.reset_flags()
                     try:
-                        if not begin_sim.is_set() or args.defaults:
+                        if not begin_sim.is_set():
+                            defaults = ut.get_default_params(DEFAULTS_PATH)
+                            state.add_default_attributes(defaults)
+                            state.params = defaults
+                        if args.defaults:
                             defaults = ut.get_default_params(DEFAULTS_PATH)
                             state.params = defaults
-                        if not args.defaults:
+                        else:
                             for key, val in vars(args).items():
                                 if val and key in state.params:
                                     if key == "points" and val != state.points:

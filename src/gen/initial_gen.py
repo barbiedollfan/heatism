@@ -2,30 +2,7 @@ import numpy as np
 import random
 import matplotlib.pyplot as plt
 from backwards_euler import insert_matrix
-
-
-def sigmoid(x):
-    return 1 / (1 + e ** (-x))
-
-
-def linear_norm(old_min, old_max, new_min, new_max, x):
-    if old_max == old_min:
-        return x
-    return (new_max - new_min) / (old_max - old_min) * (x - old_min) + new_min
-
-
-def normalize(hmap, new_min, new_max):
-    n = len(hmap)
-    old_min = hmap.min()
-    old_max = hmap.max()
-    for x in range(0, n):
-        for y in range(0, n):
-            hmap[x, y] = linear_norm(old_min, old_max, new_min, new_max, hmap[x, y])
-    return hmap
-
-
-def poly(coefficients, x):
-    return sum(coefficient * x**n for n, coefficient in enumerate(coefficients))
+from utils import linear_norm, normalize, poly
 
 
 def poly_map(points, new_min, new_max):
@@ -84,9 +61,15 @@ def piecewise_map(points, new_min, new_max):
 
 def border_map(points, new_min, new_max):
     inner_temp = np.random.randint(new_min, new_min + (new_max - new_min)/4)
-    outer_temp = np.random.randint(new_max - (new_max - new_min)/4, new_max)
     hmap = np.full((points, points), inner_temp, dtype=float)
-    hmap[0] = outer_temp
+    outer_temp = np.random.randint(new_max - (new_max - new_min)/4, new_max)
+    hmap[0, :] = outer_temp
+    outer_temp = np.random.randint(new_max - (new_max - new_min)/4, new_max)
+    hmap[:, 0] = outer_temp
+    outer_temp = np.random.randint(new_max - (new_max - new_min)/4, new_max)
+    hmap[-1, :] = outer_temp
+    outer_temp = np.random.randint(new_max - (new_max - new_min)/4, new_max)
+    hmap[:, -1] = outer_temp
     return hmap
 
 

@@ -9,9 +9,7 @@ Certain features are currently only compatible with Linux.
 ![Example 3](assets/screenshot_3.png)
 
 ## TODO
-- [x] Fix colorbar axis scaling
-- [x] Add compatibility for Mac and Windows
-- [x] Fix parameter bug where user only enters the command
+- [ ] Fix average temperature bug for piecewise plates
+- [ ] Optimize sparse matrix generation
 - [ ] Add more functions for generating initial conditions
 - [ ] Make paths more readable
-- [ ] Fix average temperature bug for piecewise plates
