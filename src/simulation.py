@@ -1,6 +1,6 @@
 import matplotlib.pyplot as plt
 import numpy as np
-import random, json, sys, threading, os
+import random, json, sys, threading, os, argparse
 from backwards_euler import (
     insert_matrix,
     gen_coeff_matrix,
@@ -9,23 +9,26 @@ from backwards_euler import (
 )
 from exceptions import (
     InputError,
+    UninitializedError,
     ParameterError,
     IncompatibleTypeError,
     InitializationError,
-    MaterialsFileError,
-    DefaultsFileError
+    JsonFileError
 )
 import scipy.sparse as spr
 import scipy.sparse.linalg as spl
-import initial_gen as gen
 import utils as ut
 from time import sleep
 from pathlib import Path
+import gen.initial_gen as gen
 
 base_dir = Path(__file__).parent
 config_dir = base_dir.parent / "configs"
+gen_dir = base_dir / "gen"
+
 DEFAULTS_PATH = config_dir / "defaults.json"
 MATERIALS_PATH = config_dir / "materials.json"
+FUNCTIONS_PATH = gen_dir / "functions.json"
 
 
 class Plate:
@@ -46,22 +49,21 @@ class Plate:
 
     def gen_material_properties(self, material):
         try:
-            with open(MATERIALS_PATH, "r") as f:
-                material_dict = json.load(f)
-        except FileNotFoundError:
-            raise MaterialsFileError("Could not find materials file.")
+            material_dict = ut.load_json(MATERIALS_PATH) 
+        except JsonFileError:
+            raise 
 
         try:
             properties = material_dict[material]
         except KeyError:
-            raise ParameterError(f'Could not get properties for "{material}".')
+            raise ParameterError(f'could not get properties for "{material}".')
 
         try:
             k = properties["k"]
             p = properties["p"]
             c = properties["c"]
         except Exception as e:
-            raise MaterialsFileError(f"Could not decode material properties: {e}.")
+            raise JsonFileError(f"could not decode material properties: {e}.")
         self.c = c
         self.p = p
         self.diffusivity = k / (p * c)
@@ -71,7 +73,8 @@ class Plate:
         new_temps_vec = self.solve(t)
         new_temps_matrix = new_temps_vec.reshape(self.points - 2, self.points - 2)
         self.heat_map = insert_matrix(new_temps_matrix, self.heat_map, 1, 1)
-
+        # print(self.heat_map.mean().round())
+        # print(self.heat_map)
     def reset(self):
         self.heat_map = self.initial_heat_map.copy()
 
@@ -191,6 +194,41 @@ Total Thermal Energy: {thermal_energy}{energy_units}
         self.render_changes = True
 
 
+class MyParser(argparse.ArgumentParser):
+    def error(self, message):
+        raise InputError(message)
+    def exit(self, status=0, message=None):
+        os._exit(2)
+    def populate(self):
+        subs = self.add_subparsers(dest="cmd")
+
+        new_cmd = subs.add_parser("new", help="initialize a new plate")
+        new_cmd.add_argument("-f", "--function", type=str, help="function with which to generate the initial heat distribution")
+        new_cmd.add_argument("-p", "--points", type=int, help="number of points per side with which to approximate the plate")
+        new_cmd.add_argument("-m", "--material", type=str, help="material of the plate")
+        new_cmd.add_argument("-s", "--side", type=float, help="side length of the plate in meters")
+        new_cmd.add_argument("-t", "--time", type=float, help="time step of the simulation in seconds")
+        new_cmd.add_argument("-th", "--thickness", type=float, help="thickness of the plate in meters")
+        new_cmd.add_argument("-d", "--defaults", action="store_true", help="use default parameters")
+
+        update_cmd = subs.add_parser("update", help="modify certain parameters")
+        update_cmd.add_argument("-m", "--material", type=str, help="modify the material of the plate")
+        update_cmd.add_argument("-s", "--side", type=float, help="modify the side length")
+        update_cmd.add_argument("-t", "--time", type=float, help="modify the time step")
+        update_cmd.add_argument("-th", "--thickness", type=float, help="modify the thickness")
+
+        materials_cmd = subs.add_parser("materials", help="print a list of usable materials")
+        functions_cmd = subs.add_parser("functions", help="print a list of functions")
+        defaults_cmd = subs.add_parser("defaults", help="print the default parameters")
+        start_cmd = subs.add_parser("start", help="start the simulation")
+        stop_cmd = subs.add_parser("stop", help="stop the simulation")
+        restart_cmd = subs.add_parser("restart", help="restart the simulation")
+        exit_cmd = subs.add_parser("exit", help="exit the simulation")
+        clear_cmd = subs.add_parser("clear", help="clear the screen")
+        info_cmd = subs.add_parser("info", help="print detailed information about the current simulation")
+        help_cmd = subs.add_parser("help", help="print a help message")
+
+
 def gen_plate(points, side_length, function, new_min, new_max):
     match function:
         case "poly":
@@ -201,213 +239,127 @@ def gen_plate(points, side_length, function, new_min, new_max):
             initial_map = gen.piecewise_poly_map(points, new_min, new_max)
         case "piecewise":
             initial_map = gen.piecewise_map(points, new_min, new_max)
+        case "border":
+            initial_map = gen.border_map(points, new_min, new_max)
         case _:
-            raise ParameterError("Unknown function name.")
+            raise ParameterError(f"unknown function name {function}.")
     new_plate = Plate(initial_map, points, side_length)
     return new_plate
 
 
-def parse_new_params(cmds, params):
-    cmds_string = "".join(cmds)
-    separate_commands = [cmd for cmd in cmds_string.split("-") if cmd]
-    for command in separate_commands:
-        split_command = command.split()
-        if len(split_command) > 2:
-            raise ParameterError("Options cannot contain multiple words.")
-        match split_command[0]:
-            case "f":
-                params["function"] = split_command[1].lower()
-            case "p":
-                try:
-                    points = int(split_command[1])
-                except ValueError:
-                    raise IncompatibleTypeError(
-                        f'Invalid points parameter "{split_command[1]}".'
-                    )
-                params["points"] = points
-            case "m":
-                params["material"] = split_command[1].lower()
-            case "s":
-                try:
-                    side_length = float(split_command[1])
-                except ValueError:
-                    raise IncompatibleTypeError(
-                        f'Invalid side length parameter "{split_command[1]}".'
-                    )
-                params["side_length"] = side_length
-            case "t":
-                try:
-                    dt = float(split_command[1])
-                except ValueError:
-                    raise IncompatibleTypeError(
-                        f'Invalid time step parameter "{split_command[1]}".'
-                    )
-                params["dt"] = dt
-            case "th":
-                try:
-                    thickness = float(split_command[1])
-                except ValueError:
-                    raise IncompatibleTypeError(
-                        f'Invalid thickness parameter "{split_command[1]}".'
-                    )
-                params["thickness"] = thickness
-            case "d":
-                params = ut.get_default_params(DEFAULTS_PATH)
-            case _:
-                raise ParameterError("Could not parse parameters.")
-    return params
-
-
 def input_loop(state):
+    parser = MyParser(exit_on_error=False)
+    parser.populate()
+    
     while True:
         cmd = input("> ")
-        if cmd == "help":
-            print_help_message()
+        try:
+            args = parser.parse_args(cmd.split()) 
+        except Exception as e:
+            print("[WARN]", e)
+            continue
+        match args.cmd:
+            case "help":
+                print_help_message()
+                continue
 
-        elif cmd == "defaults":
-            try:
-                info = ut.generate_defaults_info(DEFAULTS_PATH)
-            except InitializationError as e:
-                print("[FATAL]", e)
-                os._exit(1)
-            print(info)
-
-        elif cmd == "info":
-            with lock:
-                if begin_sim.is_set():
-                    state.print_info()
-                else:
-                    print("[WARN] Cannot print info before initializing a plate.")
-
-        elif cmd == "start":
-            with lock:
-                if begin_sim.is_set():
-                    state.start()
-                else:
-                    print("[WARN] Cannot start before initializing a plate.")
-
-        elif cmd == "stop":
-            with lock:
-                if begin_sim.is_set():
-                    state.stop()
-                else:
-                    print("[WARN] Cannot stop before initializing a plate.")
-
-        elif cmd == "restart":
-            with lock:
-                if begin_sim.is_set():
-                    state.restart()
-                else:
-                    print("[WARN] Cannot restart before initializing a plate.")
-
-        elif cmd == "exit":
-            os._exit(1)
-
-        elif cmd == "clear":
-            ut.clear()
-
-        elif cmd.split()[0] == "new":
-            with lock:
-                state.reset_flags()
+            case "materials":
                 try:
-                    if not begin_sim.is_set():
-                        defaults = ut.get_default_params(DEFAULTS_PATH)
-                        state.params = defaults
-                        begin_sim.set()
-                    sim_params = parse_new_params(cmd[4:], state.params.copy())
-                    if sim_params["points"] != state.points:
-                        state.regen_plot = True
-                    state.params = sim_params
-                    state.update_plate()
-                except InputError as e:
-                    print("[WARN]", e)
+                    info = ut.generate_materials_list(MATERIALS_PATH)
                 except InitializationError as e:
                     print("[FATAL]", e)
                     os._exit(1)
+                print(info)
 
-        elif cmd.split()[0] == "time_step":
-            with lock:
-                new_dt = cmd.split()[1]
+            case "defaults":
                 try:
-                    new_dt = float(new_dt)
-                    if begin_sim.is_set():
-                        state.update_dt(new_dt)
-                    else:
-                        print(
-                            "[WARN] Cannot change the time step before initializing a plate."
-                        )
-                except ValueError:
-                    print(f'[WARN] Invalid time step "{new_dt}".')
+                    info = ut.generate_defaults_info(DEFAULTS_PATH)
+                except InitializationError as e:
+                    print("[FATAL]", e)
+                    os._exit(1)
+                print(info)
 
-        elif cmd.split()[0] == "material":
-            with lock:
-                new_material = cmd.split()[1].lower()
-                if begin_sim.is_set():
+            case "functions":
+                try:
+                    info = ut.generate_functions_list(FUNCTIONS_PATH)
+                except InitializationError as e:
+                    print("[FATAL]", e)
+                    os._exit(1)
+                print(info)
+
+            case "info":
+                with lock:
+                    if not begin_sim.is_set():
+                        print("[WARN] Cannot print info before initializing a plate.")
+                        continue
+                    state.print_info()
+
+            case "start":
+                with lock:
+                    if not begin_sim.is_set():
+                        print("[WARN] Cannot start before initializing a plate.")
+                        continue
+                    state.start()
+
+            case "stop":
+                with lock:
+                    if not begin_sim.is_set():
+                        print("[WARN] Cannot stop before initializing a plate.")
+                        continue
+                    state.stop()
+
+            case "restart":
+                with lock:
+                    if not begin_sim.is_set():
+                        print("[WARN] Cannot restart before initializing a plate.")
+                        continue
+                    state.restart()
+
+            case "exit":
+                os._exit(1)
+
+            case "clear":
+                ut.clear()
+
+            case "new":
+                with lock:
+                    state.reset_flags()
                     try:
-                        state.update_material(new_material)
+                        if not begin_sim.is_set() or args.defaults:
+                            defaults = ut.get_default_params(DEFAULTS_PATH)
+                            state.params = defaults
+                        if not args.defaults:
+                            for key, val in vars(args).items():
+                                if val and key in state.params:
+                                    if key == "points" and val != state.points:
+                                        state.regen_plot = True
+                                    state.params[key] = val
+                        state.update_plate()
+                        begin_sim.set()
+                    except InputError as e:
+                        print("[WARN]", e)
+                        continue
                     except InitializationError as e:
                         print("[FATAL]", e)
                         os._exit(1)
-                    except InputError as e:
-                        print("[WARN]", e)
-                else:
-                    print(
-                        "[WARN] Cannot change the material before initializing a plate."
-                    )
-
-        elif cmd.split()[0] == "thickness":
-            with lock:
-                new_thickness = cmd.split()[1]
-                try:
-                    new_thickness = float(new_thickness)
-                    if begin_sim.is_set():
-                        state.update_thickness(new_thickness)
-                    else:
-                        print(
-                            "[WARN] Cannot change the thickness before initializing a plate."
-                        )
-                except ValueError:
-                    print(f'[WARN] Invalid thickness "{new_dt}".')
-        else:
-            print(f'[WARN] Unknown command "{cmd}".')
-
-
-def print_help_message():
-    print(
-        """
-COMMANDS 
-    • new {options}
-        If no plate has been initialized, this will generate a new plate to be simulated. If a plate has already been initialized, this will stop the current simulation and generate a new initial distribution.
-        new -d — Generates a plate with default parameters.
-        new -f {function} {options} — Function with which to generate the initial heat distribution.
-        new -m {material} {options} — Material of the plate.
-        new -s {side length} {options} — Physical size of the grid in meters.
-        new -p {points} {options} — Number of points per side with which the plate is approximated.
-        new -t {time step} {options} — Time step with which to simulate the plate in seconds.
-        new -th {thickness} {options} — Thickness of the plate in meters.
-        If an option is not provided, its parameter will be copied from the previous plate (i.e. changes to parameters are persistent). If no plate has been initialized, the default parameters will be used. 
-    • time_step {time}
-        Modifies the time step used for the simulation.
-    • material {material}
-        Modifies the material used for the simulation.
-    • thickness {thickness}
-        Modifies the thickness used for the simulation. Changing the thickness does not affect the simulation, only the total thermal energy as displayed by the info command (see below).
-    • start
-        Starts the simulation.
-    • stop
-        Starts the simulation.
-    • restart
-        Restarts the simulation, restoring the plate to its initial state.
-    • exit
-        Exits the program.
-    • defaults
-        Prints a list of the default parameters.
-    • info
-        Prints detailed information about the current simulation.
-    • help
-        Prints this message.
-          """
-    )
+            case "update":
+                with lock:
+                    if not begin_sim.is_set():
+                        print("[WARN] Cannot update parameters before initializing a plate.")
+                        continue
+                    if args.time:
+                        state.update_dt(args.time)
+                    if args.material:
+                        try:
+                            state.update_material(args.material)
+                        except InputError as e:
+                            print("[WARN]", e)
+                            continue
+                        except InitializationError as e:
+                            print("[FATAL]", e)
+                            os._exit(1)
+                    if args.thickness:
+                        state.update_thickness(args.thickness)
 
 
 def generate_plot_info(state):
@@ -419,6 +371,47 @@ def generate_plot_info(state):
     else:
         status = "Paused"
     return f"Δt: {dt}s\nMaterial: {material}\nAverage Temp: {average_temp}K\nStatus: {status}"
+
+
+def print_help_message():
+    print(
+        """
+COMMANDS 
+    • defaults
+        Prints a list of the default parameters.
+    • materials
+        Prints a list of usable materials in descending order of conductivity.
+    • functions
+        Prints a list of usable functions. 
+    • new {options}
+        If no plate has been initialized, this will generate a new plate to be simulated. If a plate has already been initialized, this will stop the current simulation and generate a new initial distribution.
+        new -d — Generates a plate with default parameters.
+        new -f {function} {options} — Function with which to generate the initial heat distribution.
+        new -m {material} {options} — Material of the plate.
+        new -s {side length} {options} — Physical size of the grid in meters.
+        new -p {points} {options} — Number of points per side with which the plate is approximated.
+        new -t {time step} {options} — Time step with which to simulate the plate in seconds.
+        new -th {thickness} {options} — Thickness of the plate in meters.
+        If an option is not provided, its parameter will be copied from the previous plate (i.e. changes to parameters are persistent). If no plate has been initialized, the default parameters will be used. 
+    • update {options}
+        If a plate has been initialized, this will update the specified parameters. This command can be run at any time so long as a plate has been initialized. 
+        update -m {material} {options} — Modifies the material of the plate.
+        update -t {time step} {options} — Modifies the time step.
+        update -th {thickness} {options} — Modifies the thickness of the plate.
+    • start
+        Starts the simulation.
+    • stop
+        Starts the simulation.
+    • restart
+        Restarts the simulation, restoring the plate to its initial state.
+    • exit
+        Exits the program.
+    • info
+        Prints detailed information about the current simulation.
+    • help
+        Prints this message.
+          """
+    )
 
 
 def generate_plot(state):
@@ -444,7 +437,7 @@ lock = threading.Lock()
 
 sim = SimState()
 
-print('For a list of possible commands and options, use "help".')
+print('For a list of possible commands, use "help".')
 thread = threading.Thread(target=input_loop, args=(sim,), daemon=True)
 thread.start()
 

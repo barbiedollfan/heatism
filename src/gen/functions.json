@@ -1,0 +1,7 @@
+{
+    "piecewise": "Four equally sized constant temperature regions",
+    "poly": "A random polynomial distribution",
+    "piecewise_poly": "Four equally sized polynomial distributions",
+    "border": "A cold, constant temperature with four hot, randomly generated borders",
+    "constant": "Not sure why you'd want to use this one"
+}

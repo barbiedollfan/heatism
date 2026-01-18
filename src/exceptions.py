@@ -1,6 +1,10 @@
 # Recoverable or non-fatal errors
-class InputError(SimulationError):
+class InputError(Exception):
     pass
+
+
+class UninitializedError(InputError):
+    ...
 
 
 class ParameterError(InputError):
@@ -12,13 +16,9 @@ class IncompatibleTypeError(InputError):
 
 
 # Nonrecoverable or fatal errors
-class InitializationError(SimulationError):
+class InitializationError(Exception):
     pass
 
 
-class MaterialsFileError(InitializationError):
-    pass
-
-
-class DefaultsFileError(InitializationError):
+class JsonFileError(InitializationError):
     pass

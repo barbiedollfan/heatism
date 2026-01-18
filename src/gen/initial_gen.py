@@ -45,18 +45,18 @@ def poly_map(points, new_min, new_max):
             ]
             for y in range(0, points)
         ],
-        dtype=float,
+        dtype=float
     )
     return normalize(hmap, new_min, new_max)
 
 
 def constant_map(points, new_min, new_max):
-    return np.full((points, points), np.random.randint(new_min, new_max))
+    return np.full((points, points), np.random.randint(new_min, new_max), dtype=float)
 
 
 def piecewise_poly_map(points, new_min, new_max):
     midpoint = int(points / 2)
-    hmap = np.zeros((points, points))
+    hmap = np.zeros((points, points), dtype=float)
     tl = poly_map(midpoint, new_min, new_max)
     hmap = insert_matrix(tl, hmap, 0, 0)
     tr = poly_map(midpoint, new_min, new_max)
@@ -79,6 +79,14 @@ def piecewise_map(points, new_min, new_max):
     hmap = insert_matrix(bl, hmap, midpoint, 0)
     br = constant_map(midpoint, new_min, new_max)
     hmap = insert_matrix(br, hmap, midpoint, midpoint)
+    return hmap
+
+
+def border_map(points, new_min, new_max):
+    inner_temp = np.random.randint(new_min, new_min + (new_max - new_min)/4)
+    outer_temp = np.random.randint(new_max - (new_max - new_min)/4, new_max)
+    hmap = np.full((points, points), inner_temp, dtype=float)
+    hmap[0] = outer_temp
     return hmap
 
 

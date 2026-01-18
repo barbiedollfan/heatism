@@ -12,4 +12,6 @@ Certain features are currently only compatible with Linux.
 - [x] Fix colorbar axis scaling
 - [x] Add compatibility for Mac and Windows
 - [ ] Add more functions for generating initial conditions
-- [ ] Overhaul warnings to a proper warning system
+- [ ] Make paths more readable
+- [ ] Fix parameter bug where user only enters the command
+- [ ] Fix average temperature bug for piecewise plates
